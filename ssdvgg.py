@@ -52,9 +52,13 @@ def conv_map(x, size, shape, stride, name, padding='SAME'):
         l2 = tf.nn.l2_loss(w)
     return x, l2
 
-def conv_transpose_block(x, n_filters, kernel_size=[3,3]):
-    x = slim.conv2d_transpose(x, n_filters,kernel_size, weights_initializer=tf.contrib.layers.xavier_initializer())
+def conv_transpose_block(x, num_filters, kernel_size, strides):
+    x = tf.layers.conv2d_transpose(x, num_filters, kernel_size, strides, padding='SAME')
     x = tf.nn.relu(x)
+    return x
+
+def bilinear_interpolation(x, size):
+    x = tf.image.resize_bilinear(x, size)
     return x
 
 #-------------------------------------------------------------------------------
@@ -116,10 +120,11 @@ class SSDVGG:
         self.l2_loss = 0
         self.__download_vgg(vgg_dir, progress_hook)
         self.__load_vgg(vgg_dir)
-        self.__buildtransposeconv()
+        #self.__bilinear_interpolation()
         if a_trous: self.__build_vgg_mods_a_trous()
         else: self.__build_vgg_mods()
         self.__build_ssd_layers()
+        self.__buildtransposeconv()
         self.__build_norms()
         self.__select_feature_maps()
         self.__build_classifiers()
@@ -223,9 +228,11 @@ class SSDVGG:
             self.l2_loss += sess.graph.get_tensor_by_name(l+'/L2Loss:0')
 
     #---------------------------------------------------------------------------
-    def __buildtransposeconv(self):
-        self.transpose_block1 = conv_transpose_block(self.vgg_conv5_3, 256)
-        self.transpose_block2 = conv_transpose_block(self.transpose_block1, 128)
+
+    #---------------------------------------------------------------------------
+
+    def __bilinear_interpolation(self):
+        self.resize = bilinear_interpolation(self.vgg_conv5_3, size=[self.image_input[1], self.image_input[2]])
 
     #---------------------------------------------------------------------------
     def __build_vgg_mods(self):
@@ -341,8 +348,6 @@ class SSDVGG:
         self.ssd_conv11_1 = self.__with_loss(x, l2)
         x, l2 = conv_map(self.ssd_conv11_1, 256, 3, 1, 'conv11_2', 'VALID')
         self.ssd_conv11_2 = self.__with_loss(x, l2)
-        #print("conv 11-2", self.ssd_conv11_2.shape)
-        #exit()
         if len(self.preset.maps) < 7:
             return
 
@@ -352,6 +357,15 @@ class SSDVGG:
         self.ssd_conv12_1 = self.__with_loss(x, l2)
         x, l2 = conv_map(self.ssd_conv12_1, 256, 3, 1, 'conv12_2', 'VALID')
         self.ssd_conv12_2 = self.__with_loss(x, l2)
+
+    #---------------------------------------------------------------------------
+    def __buildtransposeconv(self):
+        self.transpose_block1 = conv_transpose_block(self.ssd_conv8_2, 128, 2, 5)
+        self.transpose_block2 = conv_transpose_block(self.transpose_block1, 64, 2,3)
+        self.transpose_block3 = conv_transpose_block(self.transpose_block2,32, 4, 2)
+        self.logits_seg = slim.conv2d(self.transpose_block3, self.num_classes_for_seg_gt,
+                                            [1, 1], activation_fn=None, scope='logits_seg')
+
 
     #---------------------------------------------------------------------------
     def __build_norms(self):

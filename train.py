@@ -263,10 +263,10 @@ def main():
 
                 feed = {net.image_input: x,
                         net.labels: y, net.label_seg_gt:img_seg}
-                transpose_block2,result, loss_batch, _ = sess.run([net.transpose_block2,net.result, net.losses,
+                logits_seg,result, loss_batch, _ = sess.run([net.logits_seg,net.result, net.losses,
                                                   net.optimizer],
                                                  feed_dict=feed)
-                print("ssd conv",transpose_block2.shape)
+                print("logits",logits_seg.shape)
                 exit()
                 if math.isnan(loss_batch['confidence']):
                     print('[!] Confidence loss is NaN.')
