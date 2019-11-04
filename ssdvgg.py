@@ -416,6 +416,11 @@ class SSDVGG:
         self.label_seg_gt = tf.placeholder(tf.float32, name='seg_gt_labels',
                                            shape=[None,None,None,self.num_classes_for_seg_gt])
 
+        with tf.variable_scope('segmentation_loss'):
+            self.segmentation_loss = tf.reduce_mean(
+                tf.nn.softmax_cross_entropy_with_logits(logits=self.logits_seg,
+                                                        labels=self.label_seg_gt))
+
         with tf.variable_scope('ground_truth'):
             #-------------------------------------------------------------------
             # Split the ground truth tensor
@@ -431,6 +436,7 @@ class SSDVGG:
             # Batch size
             # Shape: scalar
             batch_size = tf.shape(gt_cl)[0]
+
 
         #-----------------------------------------------------------------------
         # Compute match counters
@@ -613,8 +619,9 @@ class SSDVGG:
                                        name='l2_loss')
 
             # Final loss
-            # Shape: scalar
-            self.loss = tf.add(self.conf_and_loc_loss, self.l2_loss,
+            # Shape: scalar # add l2 loss - Removed as of now
+            self.loss = tf.add(self.conf_and_loc_loss,
+                               self.segmentation_loss,
                                name='loss')
 
         #-----------------------------------------------------------------------
@@ -632,8 +639,8 @@ class SSDVGG:
         self.losses = {
             'total': self.loss,
             'localization': self.localization_loss,
-            'confidence': self.confidence_loss,
-            'l2': self.l2_loss
+            'confidence': self.confidence_loss
+            #'l2': self.l2_loss
         }
 
     #---------------------------------------------------------------------------

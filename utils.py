@@ -79,6 +79,11 @@ def prop2abs(center, size, imgsize):
     cy      = center.y*imgsize.h
     return int(cx-width2), int(cx+width2), int(cy-height2), int(cy+height2)
 
+def box_is_valid(box):
+    for x in [box.center.x, box.center.y, box.size.w, box.size.h]:
+        if math.isnan(x) or math.isinf(x):
+            return False
+    return True
 
 def normalize_box(box):
     if not box_is_valid(box):
@@ -191,7 +196,7 @@ class LossSummary:
         self.session = session
         self.writer = writer
         self.num_samples = num_samples
-        self.loss_names = ['total', 'localization', 'confidence', 'l2']
+        self.loss_names = ['total', 'localization', 'confidence'] # removing l2 loss as of now. tf.add problem*
         self.loss_values = {}
         self.placeholders = {}
 

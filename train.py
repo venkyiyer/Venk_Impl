@@ -58,15 +58,15 @@ def main():
                         help='data directory')
     parser.add_argument('--vgg-dir', default='vgg_graph',
                         help='directory for the VGG-16 model')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=10,
                         help='number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=2,
+    parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
     parser.add_argument('--tensorboard-dir', default="tb",
                         help='name of the tensorboard data directory')
     parser.add_argument('--checkpoint-interval', type=int, default=5,
                         help='checkpoint interval')
-    parser.add_argument('--lr-values', type=str, default='0.00075;0.0001;0.00001',
+    parser.add_argument('--lr-values', type=str, default='0.00001; 0.00001;0.00001',
                         help='learning rate values')
     parser.add_argument('--lr-boundaries', type=str, default='320000;400000',
                         help='learning rate chage boundaries (in batches)')
@@ -263,13 +263,13 @@ def main():
 
                 feed = {net.image_input: x,
                         net.labels: y, net.label_seg_gt:img_seg}
-                logits_seg,result, loss_batch, _ = sess.run([net.logits_seg,net.result, net.losses,
+                result, loss_batch, _ = sess.run([net.result, net.losses,
                                                   net.optimizer],
                                                  feed_dict=feed)
-                print("logits",logits_seg.shape)
-                exit()
-                if math.isnan(loss_batch['confidence']):
-                    print('[!] Confidence loss is NaN.')
+                #print("logits",logits_seg.shape)
+                #exit()
+                if math.isnan(loss_batch['total']):
+                    print('[!] total loss is NaN.')
 
                 training_loss.add(loss_batch, x.shape[0])
 
@@ -289,10 +289,10 @@ def main():
             generator = td.valid_generator(args.batch_size, args.num_workers)
             description = '[i] Valid {:>2}/{}'.format(e+1, args.epochs)
 
-            for x, y, gt_boxes in tqdm(generator, total=n_valid_batches,
+            for x, y, gt_boxes, img_seg in tqdm(generator, total=n_valid_batches,
                                        desc=description, unit='batches'):
                 feed = {net.image_input: x,
-                        net.labels: y}
+                        net.labels: y, net.label_seg_gt:img_seg}
                 result, loss_batch = sess.run([net.result, net.losses],
                                               feed_dict=feed)
 
