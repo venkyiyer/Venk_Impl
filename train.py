@@ -35,6 +35,8 @@ from ssdvgg import SSDVGG
 from utils import *
 from tqdm import tqdm
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 if sys.version_info[0] < 3:
     print("This is a Python 3 program. Use Python 3 or higher.")
     sys.exit(1)
@@ -58,13 +60,13 @@ def main():
                         help='data directory')
     parser.add_argument('--vgg-dir', default='vgg_graph',
                         help='directory for the VGG-16 model')
-    parser.add_argument('--epochs', type=int, default=10,
+    parser.add_argument('--epochs', type=int, default=5,
                         help='number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
     parser.add_argument('--tensorboard-dir', default="tb",
                         help='name of the tensorboard data directory')
-    parser.add_argument('--checkpoint-interval', type=int, default=5,
+    parser.add_argument('--checkpoint-interval', type=int, default=3,
                         help='checkpoint interval')
     parser.add_argument('--lr-values', type=str, default='0.00001; 0.00001;0.00001',
                         help='learning rate values')

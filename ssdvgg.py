@@ -205,20 +205,14 @@ class SSDVGG:
         sess = self.session
         graph = tf.saved_model.loader.load(sess, ['vgg16'], vgg_dir+'/vgg')
         self.image_input = sess.graph.get_tensor_by_name('image_input:0')
-        print("input shape", self.image_input.shape)
         self.keep_prob   = sess.graph.get_tensor_by_name('keep_prob:0')
         self.vgg_conv4_3 = sess.graph.get_tensor_by_name('conv4_3/Relu:0')
-        print("vgg conv 4_3", self.vgg_conv4_3.shape)
         self.vgg_conv5_3 = sess.graph.get_tensor_by_name('conv5_3/Relu:0')
-        print("vgg_conv5_3", self.vgg_conv5_3.shape)
         self.vgg_fc6_w   = sess.graph.get_tensor_by_name('fc6/weights:0')
-        print("vgg_fc6_w", self.vgg_fc6_w.shape)
         self.vgg_fc6_b   = sess.graph.get_tensor_by_name('fc6/biases:0')
-        print("vgg_fc6_b", self.vgg_fc6_b.shape)
         self.vgg_fc7_w   = sess.graph.get_tensor_by_name('fc7/weights:0')
-        print("vgg_fc7_w", self.vgg_fc7_w.shape)
         self.vgg_fc7_b   = sess.graph.get_tensor_by_name('fc7/biases:0')
-        print("vgg_fc7_b", self.vgg_fc7_b.shape)
+
 
         layers = ['conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1',
                   'conv3_2', 'conv3_3', 'conv4_1', 'conv4_2', 'conv4_3',

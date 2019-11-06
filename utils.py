@@ -104,6 +104,21 @@ def normalize_box(box):
     center, size = abs2prop(xmin, xmax, ymin, ymax, img_size)
     return Box(box.label, box.labelid, center, size)
 
+def draw_box(img, box, color):
+    img_size = Size(img.shape[1], img.shape[0])
+    xmin, xmax, ymin, ymax = prop2abs(box.center, box.size, img_size)
+    img_box = np.copy(img)
+    cv2.rectangle(img_box, (xmin, ymin), (xmax, ymax), color, 2)
+    cv2.rectangle(img_box, (xmin-1, ymin), (xmax+1, ymin-20), color, cv2.FILLED)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(img_box, box.label, (xmin+5, ymin-5), font, 0.5,
+                (255, 255, 255), 1, cv2.LINE_AA)
+    alpha = 0.8
+    cv2.addWeighted(img_box, alpha, img, 1.-alpha, 0, img)
+
+
+#PrecisionSummary(sess, summary_writer, 'training',
+#                                       td.lname2id.keys(), restore)
 class PrecisionSummary:
     #---------------------------------------------------------------------------
     def __init__(self, session, writer, sample_name, labels, restore=False):
@@ -113,7 +128,9 @@ class PrecisionSummary:
 
         sess = session
         ph_name = sample_name+'_mAP_ph'
+        print("ph_name", ph_name)
         sum_name = sample_name+'_mAP'
+        print("sum_name",sum_name)
 
         if restore:
             self.mAP_placeholder = sess.graph.get_tensor_by_name(ph_name+':0')
@@ -127,6 +144,7 @@ class PrecisionSummary:
         self.summary_ops = {}
 
         for label in labels:
+            print("label", labels)
             sum_name = sample_name+'_AP_'+label
             ph_name = sample_name+'_AP_ph_'+label
             if restore:
