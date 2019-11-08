@@ -23,14 +23,15 @@ import argparse
 import math
 import sys
 import os
-
+import cv2
 import multiprocessing as mp
 import tensorflow as tf
 import numpy as np
 
+
 from average_precision import APCalculator, APs2mAP
 from training_data import TrainingData
-from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps
+from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps, reverse_one_hot, colour_code_segmentation, color
 from ssdvgg import SSDVGG
 from utils import *
 from tqdm import tqdm
@@ -60,7 +61,7 @@ def main():
                         help='data directory')
     parser.add_argument('--vgg-dir', default='vgg_graph',
                         help='directory for the VGG-16 model')
-    parser.add_argument('--epochs', type=int, default=5,
+    parser.add_argument('--epochs', type=int, default=3,
                         help='number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
@@ -268,7 +269,7 @@ def main():
                 result, loss_batch, _ = sess.run([net.result, net.losses,
                                                   net.optimizer],
                                                  feed_dict=feed)
-                #print("logits",logits_seg.shape)
+                #print("logits_seg shape", logits_seg.shape)
                 #exit()
                 if math.isnan(loss_batch['total']):
                     print('[!] total loss is NaN.')
@@ -295,10 +296,15 @@ def main():
                                        desc=description, unit='batches'):
                 feed = {net.image_input: x,
                         net.labels: y, net.label_seg_gt:img_seg}
-                result, loss_batch = sess.run([net.result, net.losses],
+                output_seg,result, loss_batch = sess.run([net.logits_seg,net.result, net.losses],
                                               feed_dict=feed)
 
                 validation_loss.add(loss_batch,  x.shape[0])
+
+                output_seg_rev = reverse_one_hot(output_seg)
+                output_seg_output = colour_code_segmentation(output_seg_rev,color)
+
+
 
                 if e == 0: continue
 

@@ -181,14 +181,14 @@ class BrightnessTransform(Transform):
     Transform brightness
     Parameters: delta
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         data = data.astype(np.float32)
         delta = random.randint(-self.delta, self.delta)
         data += delta
         data[data>255] = 255
         data[data<0] = 0
         data = data.astype(np.uint8)
-        return data, label, gt
+        return data, label, gt, img_seg
 
 #-------------------------------------------------------------------------------
 class ContrastTransform(Transform):
@@ -196,14 +196,14 @@ class ContrastTransform(Transform):
     Transform contrast
     Parameters: lower, upper
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         data = data.astype(np.float32)
         delta = random.uniform(self.lower, self.upper)
         data *= delta
         data[data>255] = 255
         data[data<0] = 0
         data = data.astype(np.uint8)
-        return data, label, gt
+        return data, label, gt, img_seg
 
 #-------------------------------------------------------------------------------
 class HueTransform(Transform):
@@ -211,7 +211,7 @@ class HueTransform(Transform):
     Transform hue
     Parameters: delta
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         data = cv2.cvtColor(data, cv2.COLOR_BGR2HSV)
         data = data.astype(np.float32)
         delta = random.randint(-self.delta, self.delta)
@@ -220,7 +220,7 @@ class HueTransform(Transform):
         data[0][data[0]<0] +=180
         data = data.astype(np.uint8)
         data = cv2.cvtColor(data, cv2.COLOR_HSV2BGR)
-        return data, label, gt
+        return data, label, gt, img_seg
 
 #-------------------------------------------------------------------------------
 class SaturationTransform(Transform):
@@ -228,7 +228,7 @@ class SaturationTransform(Transform):
     Transform hue
     Parameters: lower, upper
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         data = cv2.cvtColor(data, cv2.COLOR_BGR2HSV)
         data = data.astype(np.float32)
         delta = random.uniform(self.lower, self.upper)
@@ -237,7 +237,7 @@ class SaturationTransform(Transform):
         data[1][data[1]<0] = 0
         data = data.astype(np.uint8)
         data = cv2.cvtColor(data, cv2.COLOR_HSV2BGR)
-        return data, label, gt
+        return data, label, gt, img_seg
 
 #-------------------------------------------------------------------------------
 class ReorderChannelsTransform(Transform):
@@ -291,7 +291,7 @@ class ExpandTransform(Transform):
     Expand the image and fill the empty space with the mean value
     Parameters: max_ratio, mean_value
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         #-----------------------------------------------------------------------
         # Calculate sizes and offsets
         #-----------------------------------------------------------------------
@@ -313,7 +313,7 @@ class ExpandTransform(Transform):
         #-----------------------------------------------------------------------
         gt = transform_gt(gt, new_size, h_off, w_off)
 
-        return img, label, gt
+        return img, label, gt, img_seg
 
 #-------------------------------------------------------------------------------
 class SamplerTransform(Transform):
@@ -322,12 +322,12 @@ class SamplerTransform(Transform):
     Params: min_scale, max_scale, min_aspect_ratio, max_aspect_ratio,
             min_jaccard_overlap
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         #-----------------------------------------------------------------------
         # Check whether to sample or not
         #-----------------------------------------------------------------------
         if not self.sample:
-            return data, label, gt
+            return data, label, gt, img_seg
 
         #-----------------------------------------------------------------------
         # Retry sampling a couple of times
@@ -375,7 +375,7 @@ class SamplerTransform(Transform):
         data = data[box_arr[2]:box_arr[3], box_arr[0]:box_arr[1]]
         gt = transform_gt(gt, new_size, h_off, w_off)
 
-        return data, label, gt
+        return data, label, gt, img_seg
 
 #-------------------------------------------------------------------------------
 class SamplePickerTransform(Transform):
@@ -383,10 +383,10 @@ class SamplePickerTransform(Transform):
     Run a bunch of sample transforms and return one of the produced samples
     Parameters: samplers
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         samples = []
         for sampler in self.samplers:
-            sample = sampler(data, label, gt)
+            sample = sampler(data, label, gt, img_seg)
             if sample is not None:
                 samples.append(sample)
         return random.choice(samples)
@@ -396,8 +396,9 @@ class HorizontalFlipTransform(Transform):
     """
     Horizontally flip the image
     """
-    def __call__(self, data, label, gt):
+    def __call__(self, data, label, gt, img_seg):
         data = cv2.flip(data, 1)
+        img_seg = cv2. flip(img_seg,1)
         boxes = []
         for box in gt.boxes:
             center = Point(1-box.center.x, box.center.y)
@@ -405,4 +406,4 @@ class HorizontalFlipTransform(Transform):
             boxes.append(box)
         gt = Sample(gt.filename, boxes, gt.imgsize)
 
-        return data, label, gt
+        return data, label, gt, img_seg

@@ -128,9 +128,8 @@ class PrecisionSummary:
 
         sess = session
         ph_name = sample_name+'_mAP_ph'
-        print("ph_name", ph_name)
         sum_name = sample_name+'_mAP'
-        print("sum_name",sum_name)
+
 
         if restore:
             self.mAP_placeholder = sess.graph.get_tensor_by_name(ph_name+':0')
@@ -144,7 +143,6 @@ class PrecisionSummary:
         self.summary_ops = {}
 
         for label in labels:
-            print("label", labels)
             sum_name = sample_name+'_AP_'+label
             ph_name = sample_name+'_AP_ph_'+label
             if restore:

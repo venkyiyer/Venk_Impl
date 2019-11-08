@@ -99,12 +99,14 @@ def build_train_transforms(preset, num_classes, sampler_trials, expand_prob):
     #---------------------------------------------------------------------------
     transforms = [
         ImageLoaderTransform(),
-        #tf_brightness,
-        #tf_distort,
+        tf_brightness,
+        tf_contrast,
+        tf_hue,
+        tf_saturation,
         #tf_rnd_reorder_channels,
-        #tf_rnd_expand,
-        #tf_sample_picker,
-        #tf_flip,
+        tf_rnd_expand,
+        tf_sample_picker,
+        tf_flip,
         LabelCreatorTransform(preset=preset, num_classes=num_classes),
         LabelCreatorSegment(),
         tf_resize
