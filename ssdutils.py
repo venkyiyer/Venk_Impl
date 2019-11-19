@@ -189,19 +189,7 @@ def decode_location(box, anchor):
     h = exp(box[3]/5) * anchor.size.h
     return Point(x, y), Size(w, h)
 
-#------------------------------------------------------------------------------
 
-def reverse_one_hot(image):
-    x = np.argmax(image, axis=-1)
-    return x
-
-#------------------------------------------------------------------------------
-
-def colour_code_segmentation(image, label_values):
-    colour_codes = np.array(label_values)
-    x = colour_codes[image.astype(int)]
-
-    return x
 
 #-------------------------------------------------------------------------------
 def decode_boxes(pred, anchors, confidence_threshold = 0.01, lid2name = {},

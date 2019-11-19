@@ -27,11 +27,12 @@ import cv2
 import multiprocessing as mp
 import tensorflow as tf
 import numpy as np
+from PIL import Image
 
 
 from average_precision import APCalculator, APs2mAP
 from training_data import TrainingData
-from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps, reverse_one_hot, colour_code_segmentation, color
+from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps, color
 from ssdvgg import SSDVGG
 from utils import *
 from tqdm import tqdm
@@ -61,7 +62,7 @@ def main():
                         help='data directory')
     parser.add_argument('--vgg-dir', default='vgg_graph',
                         help='directory for the VGG-16 model')
-    parser.add_argument('--epochs', type=int, default=3,
+    parser.add_argument('--epochs', type=int, default=30,
                         help='number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
@@ -266,11 +267,25 @@ def main():
 
                 feed = {net.image_input: x,
                         net.labels: y, net.label_seg_gt:img_seg}
-                result, loss_batch, _ = sess.run([net.result, net.losses,
-                                                  net.optimizer],
-                                                 feed_dict=feed)
-                #print("logits_seg shape", logits_seg.shape)
-                #exit()
+
+                # cv2.imwrite('i_img.png', x[0])
+                # cv2.imwrite('one_img.png', 255 * img_seg[0])
+                # cv2.imwrite('final_img.png', np.argmax(img_seg[0], axis=-1))
+                #
+                # out_img = reverse_one_hot(img_seg[0])
+                # out_img = colour_code_segmentation(out_img)
+                # cv2.imwrite("out_image.png", out_img)
+                # exit()
+
+                # result, loss_batch, _ = sess.run([net.result, net.losses,
+                #                                   net.optimizer],
+                #                                  feed_dict=feed)
+
+                #vgg_conv4_3, transpose_block1, transpose_block2, transpose_block3, transpose_block4 = sess.run([net.vgg_conv4_3, net.transpose_block1, net.transpose_block2, net.transpose_block3, net.transpose_block4], feed_dict=feed)
+
+                loss_batch, _ = sess.run([net.losses, net.optimizer], feed_dict=feed)
+
+
                 if math.isnan(loss_batch['total']):
                     print('[!] total loss is NaN.')
 
@@ -278,13 +293,13 @@ def main():
 
                 if e == 0: continue
 
-                for i in range(result.shape[0]):
-                    boxes = decode_boxes(result[i], anchors, 0.5, td.lid2name)
-                    boxes = suppress_overlaps(boxes)
-                    training_ap_calc.add_detections(gt_boxes[i], boxes)
-
-                    if len(training_imgs_samples) < 3:
-                        training_imgs_samples.append((saved_images[i], boxes))
+                # for i in range(result.shape[0]):
+                #     boxes = decode_boxes(result[i], anchors, 0.5, td.lid2name)
+                #     boxes = suppress_overlaps(boxes)
+                #     training_ap_calc.add_detections(gt_boxes[i], boxes)
+                #
+                #     if len(training_imgs_samples) < 3:
+                #         training_imgs_samples.append((saved_images[i], boxes))
 
             #-------------------------------------------------------------------
             # Validate
@@ -292,19 +307,33 @@ def main():
             generator = td.valid_generator(args.batch_size, args.num_workers)
             description = '[i] Valid {:>2}/{}'.format(e+1, args.epochs)
 
+            z = 0
             for x, y, gt_boxes, img_seg in tqdm(generator, total=n_valid_batches,
                                        desc=description, unit='batches'):
+                # feed = {net.image_input: x,
+                #         net.labels: y, net.label_seg_gt:img_seg}
+                # output_seg,result, loss_batch = sess.run([net.logits_seg,net.result, net.losses],
+                #                               feed_dict=feed)
+
                 feed = {net.image_input: x,
-                        net.labels: y, net.label_seg_gt:img_seg}
-                output_seg,result, loss_batch = sess.run([net.logits_seg,net.result, net.losses],
+                        net.label_seg_gt:img_seg}
+                output_seg, loss_batch = sess.run([net.logits_seg, net.losses],
                                               feed_dict=feed)
 
                 validation_loss.add(loss_batch,  x.shape[0])
 
-                output_seg_rev = reverse_one_hot(output_seg)
-                output_seg_output = colour_code_segmentation(output_seg_rev,color)
+                output_seg_rev = reverse_one_hot(output_seg[0])
 
+                output_seg_output = colour_code_segmentation(output_seg_rev)
 
+                cv2.imwrite("val_results/inp_" + str(z) + '.png', x[0])
+                cv2.imwrite("val_results/out_" + str(z) + '.png', output_seg_output)
+                print(z)
+                print(np.unique(output_seg_rev))
+                z += 1
+                #exit()
+
+                continue
 
                 if e == 0: continue
 

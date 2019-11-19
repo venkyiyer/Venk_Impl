@@ -116,7 +116,8 @@ class SSDVGG:
         """
         self.num_classes = num_classes+1
         self.num_vars = num_classes+5
-        self.num_classes_for_seg_gt = num_classes
+        # self.num_classes_for_seg_gt = num_classes
+        self.num_classes_for_seg_gt = 4
         self.l2_loss = 0
         self.__download_vgg(vgg_dir, progress_hook)
         self.__load_vgg(vgg_dir)
@@ -206,8 +207,13 @@ class SSDVGG:
         graph = tf.saved_model.loader.load(sess, ['vgg16'], vgg_dir+'/vgg')
         self.image_input = sess.graph.get_tensor_by_name('image_input:0')
         self.keep_prob   = sess.graph.get_tensor_by_name('keep_prob:0')
+
+        self.vgg_conv1_2 = sess.graph.get_tensor_by_name('conv1_2/Relu:0')
+        self.vgg_conv2_2 = sess.graph.get_tensor_by_name('conv2_2/Relu:0')
+        self.vgg_conv3_3 = sess.graph.get_tensor_by_name('conv3_3/Relu:0')
         self.vgg_conv4_3 = sess.graph.get_tensor_by_name('conv4_3/Relu:0')
         self.vgg_conv5_3 = sess.graph.get_tensor_by_name('conv5_3/Relu:0')
+
         self.vgg_fc6_w   = sess.graph.get_tensor_by_name('fc6/weights:0')
         self.vgg_fc6_b   = sess.graph.get_tensor_by_name('fc6/biases:0')
         self.vgg_fc7_w   = sess.graph.get_tensor_by_name('fc7/weights:0')
@@ -354,10 +360,20 @@ class SSDVGG:
 
     #---------------------------------------------------------------------------
     def __buildtransposeconv(self):
-        self.transpose_block1 = conv_transpose_block(self.ssd_conv8_2, 128, 2, 5)
-        self.transpose_block2 = conv_transpose_block(self.transpose_block1, 64, 2,3)
-        self.transpose_block3 = conv_transpose_block(self.transpose_block2,32, 4, 2)
-        self.logits_seg = slim.conv2d(self.transpose_block3, self.num_classes_for_seg_gt,
+        # self.transpose_block1 = conv_transpose_block(self.ssd_conv8_2, 128, 2, 5)
+        # self.transpose_block2 = conv_transpose_block(self.transpose_block1, 64, 2,3)
+        # self.transpose_block3 = conv_transpose_block(self.transpose_block2,32, 4, 2)
+        # self.logits_seg = slim.conv2d(self.transpose_block3, self.num_classes_for_seg_gt,
+        #                                     [1, 1], activation_fn=None, scope='logits_seg')
+
+        self.transpose_block1 = conv_transpose_block(self.vgg_conv5_3, 512, 4, 2)
+        self.transpose_block1 = self.transpose_block1 + self.vgg_conv4_3
+        self.transpose_block2 = conv_transpose_block(self.transpose_block1, 256, 4,2)
+
+        self.transpose_block3 = conv_transpose_block(self.transpose_block2, 128, 4, 2)
+        self.transpose_block3 = self.transpose_block3 + self.vgg_conv2_2
+        self.transpose_block4 = conv_transpose_block(self.transpose_block3, 64, 4, 2)
+        self.logits_seg = slim.conv2d(self.transpose_block4, self.num_classes_for_seg_gt,
                                             [1, 1], activation_fn=None, scope='logits_seg')
 
 
@@ -614,27 +630,42 @@ class SSDVGG:
 
             # Final loss
             # Shape: scalar # add l2 loss - Removed as of now
-            self.loss = tf.add(self.conf_and_loc_loss,
-                               self.segmentation_loss,
-                               name='loss')
+            # self.loss = tf.add(self.conf_and_loc_loss,
+            #                    self.segmentation_loss,
+            #                    name='loss')
+
+            self.loss = tf.add(self.segmentation_loss, tf.constant(0.0),name='loss')
 
         #-----------------------------------------------------------------------
         # Build the optimizer
         #-----------------------------------------------------------------------
         with tf.variable_scope('optimizer'):
             optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
-            optimizer = optimizer.minimize(self.loss, global_step=global_step,
+
+            train_var_list = [var for var in tf.trainable_variables() if var.name.split('_')[0] not in ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']]
+            #print(train_var_list)
+
+
+            for var in tf.trainable_variables():
+                print(var)
+
+
+            optimizer = optimizer.minimize(self.loss, var_list=train_var_list, global_step=global_step,
                                            name='optimizer')
 
         #-----------------------------------------------------------------------
         # Store the tensors
         #-----------------------------------------------------------------------
         self.optimizer = optimizer
+        # self.losses = {
+        #     'total': self.loss,
+        #     'localization': self.localization_loss,
+        #     'confidence': self.confidence_loss
+        #     #'l2': self.l2_loss
+        # }
+
         self.losses = {
-            'total': self.loss,
-            'localization': self.localization_loss,
-            'confidence': self.confidence_loss
-            #'l2': self.l2_loss
+            'total': self.segmentation_loss,
         }
 
     #---------------------------------------------------------------------------

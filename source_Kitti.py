@@ -12,9 +12,11 @@ from glob import glob
 from tqdm import tqdm
 
 label_defs = [
-    Label("Car", (142,0,0)),
-    Label("Pedestrain",(60,20,220)),
-    Label("Cyclist", (32,11,119))]
+    Label("car", (142,0,0)),
+    Label("person",(60,20,220)),
+    Label("cyclist", (32,11,119)),
+    Label("bus", (255,0,0)),
+    Label("truck", (0,255,255))]
 
 print(label_defs)
 
@@ -52,10 +54,10 @@ class KittiSource:
         for fn in tqdm(annot_files,unit='samples'):
             with open(fn, 'r') as f:
                 doc = lxml.etree.parse(f)
-                filename = image_root+doc.xpath('/annotations/filename')[0].text
+                filename = image_root+doc.xpath('/annotation/filename')[0].text
                 with open(fn, 'r') as f1:
                     doc1 =lxml.etree.parse(f1)
-                    filename1 = image_seg_root + doc1.xpath('/annotations/filename')[0].text
+                    filename1 = image_seg_root + doc1.xpath('/annotation/filename')[0].text
                 
                 
 
@@ -73,7 +75,7 @@ class KittiSource:
                 # Get boxes for all the objects
                 #---------------------------------------------------------------
                 boxes    = []
-                objects  = doc.xpath('/annotations/object')
+                objects  = doc.xpath('/annotation/object')
                 for obj in objects:
                     #-----------------------------------------------------------
                     # Get the properties of the box and convert them to the
@@ -114,10 +116,10 @@ class KittiSource:
         for fn in tqdm(annot_files,unit='samples'):
             with open(fn, 'r') as f:
                 doc = lxml.etree.parse(f)
-                filename = image_root+doc.xpath('/annotations/filename')[0].text
+                filename = image_root+doc.xpath('/annotation/filename')[0].text
                 with open(fn, 'r') as f1:
                     doc1 =lxml.etree.parse(f1)
-                    filename1 = image_seg_root + doc1.xpath('/annotations/filename')[0].text
+                    filename1 = image_seg_root + doc1.xpath('/annotation/filename')[0].text
                 
                 
 
@@ -135,7 +137,7 @@ class KittiSource:
                 # Get boxes for all the objects
                 #---------------------------------------------------------------
                 boxes    = []
-                objects  = doc.xpath('/annotations/object')
+                objects  = doc.xpath('/annotation/object')
                 for obj in objects:
                     #-----------------------------------------------------------
                     # Get the properties of the box and convert them to the
