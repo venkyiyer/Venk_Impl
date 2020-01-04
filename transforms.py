@@ -20,6 +20,7 @@
 
 import cv2
 import random
+import copy
 
 import numpy as np
 
@@ -28,6 +29,8 @@ from ssdutils import box2array, compute_overlap, compute_location, anchors2array
 from utils import Size, Sample, Point, Box, abs2prop, prop2abs, Label
 from math import sqrt
 
+from PIL import Image
+import numpy as np
 
 #-------------------------------------------------------------------------------
 class Transform:
@@ -137,6 +140,7 @@ class ResizeTransform(Transform):
         return resized, label, gt, seg_gt_onehot, seg_gt_to_compare
 #-----------------------------------------------------------------------------
 class LabelCreatorSegment(Transform):
+
 
     def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         # #1=aeroplane, 2=bicycle, 3=bird, 4=boat, 5=bottle, 6=bus, 7=car , 8=cat, 9=chair, 10=cow, 11=diningtable, 12=dog, 13=horse, 14=motorbike, 15=person, 16=potted plant, 17=sheep, 18=sofa, 19=train, 20=tv/monitor
@@ -305,14 +309,16 @@ def transform_box(box, orig_size, new_size, h_off, w_off):
     return Box(box.label, box.labelid, center, size)
 
 #-------------------------------------------------------------------------------
-def transform_gt(gt, new_size, h_off, w_off):
+def transform_gt(gt, new_size, h_off, w_off, img_seg):
     boxes = []
     for box in gt.boxes:
         box = transform_box(box, gt.imgsize, new_size, h_off, w_off)
         if box is None:
             continue
         boxes.append(box)
+
     return Sample(gt.filename, boxes, new_size, gt.seg_gt, gt.seg_gt_to_compare)
+
 
 #-------------------------------------------------------------------------------
 class ExpandTransform(Transform):
@@ -340,7 +346,8 @@ class ExpandTransform(Transform):
         #-----------------------------------------------------------------------
         # Transform the ground truth
         #-----------------------------------------------------------------------
-        gt = transform_gt(gt, new_size, h_off, w_off)
+        # gt = transform_gt(gt, new_size, h_off, w_off)
+        gt = transform_gt(gt, new_size, h_off, w_off, img_seg)
 
         return img, label, gt, seg_gt, seg_gt_to_compare
 
@@ -402,7 +409,8 @@ class SamplerTransform(Transform):
         w_off = -box_arr[0]
         h_off = -box_arr[2]
         data = data[box_arr[2]:box_arr[3], box_arr[0]:box_arr[1]]
-        gt = transform_gt(gt, new_size, h_off, w_off)
+        # gt = transform_gt(gt, new_size, h_off, w_off)
+        gt = transform_gt(gt, new_size, h_off, w_off, img_seg)
 
         return data, label, gt, seg_gt, seg_gt_to_compare
 
@@ -434,6 +442,7 @@ class HorizontalFlipTransform(Transform):
             center = Point(1-box.center.x, box.center.y)
             box = Box(box.label, box.labelid, center, box.size)
             boxes.append(box)
+
         gt = Sample(gt.filename, boxes, gt.imgsize, gt.seg_gt, gt.seg_gt_to_compare)
 
         return data, label, gt, seg_gt, seg_gt_to_compare

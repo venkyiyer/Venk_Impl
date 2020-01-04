@@ -118,6 +118,7 @@ def build_train_transforms(preset, num_classes, sampler_trials, expand_prob):
     #---------------------------------------------------------------------------
     transforms = [
         ImageLoaderTransform(),
+<<<<<<< HEAD
         tf_brightness,
         tf_contrast,
         tf_hue,
@@ -127,6 +128,15 @@ def build_train_transforms(preset, num_classes, sampler_trials, expand_prob):
         #tf_rnd_expand,
         tf_sample_picker,
         tf_flip,
+=======
+        # tf_brightness,
+        # tf_contrast,
+        # tf_hue,
+        # tf_saturation,
+        # tf_expand,
+        # tf_sample_picker,
+        # tf_flip,
+>>>>>>> e94b866ea1aba81a98493aaa2833119f31290014
         LabelCreatorTransform(preset=preset, num_classes=num_classes),
         LabelCreatorSegment(),
         tf_resize
@@ -165,7 +175,7 @@ def main():
                         help="Annotate the data samples")
     parser.add_argument('--compute-td', type=str2bool, default='True',
                         help="Compute training data")
-    parser.add_argument('--preset', default='vgg300',
+    parser.add_argument('--preset', default='vgg512',
                         choices=['vgg300', 'vgg512'],
                         help="The neural network preset")
     parser.add_argument('--process-test', type=str2bool, default='True',

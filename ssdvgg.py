@@ -216,6 +216,7 @@ class SSDVGG:
         self.vgg_conv4_3 = sess.graph.get_tensor_by_name('conv4_3/Relu:0')
         self.vgg_conv5_3 = sess.graph.get_tensor_by_name('conv5_3/Relu:0')
 
+
         # Encoder outputs
         self.fcn_in = sess.graph.get_tensor_by_name('pool5:0')
         self.feed2 = sess.graph.get_tensor_by_name('pool4:0')
@@ -229,7 +230,6 @@ class SSDVGG:
         self.vgg_fc6_b = sess.graph.get_tensor_by_name('fc6/biases:0')
         self.vgg_fc7_w = sess.graph.get_tensor_by_name('fc7/weights:0')
         self.vgg_fc7_b = sess.graph.get_tensor_by_name('fc7/biases:0')
-
 
         layers = ['conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1',
                   'conv3_2', 'conv3_3', 'conv4_1', 'conv4_2', 'conv4_3',
@@ -398,6 +398,7 @@ class SSDVGG:
         self.ssd_conv12_2 = self.__with_loss(x, l2)
 
     #---------------------------------------------------------------------------
+
 
     def _bilinear_initializer(self, num_classes_for_seg_gt, kernel_size, cross_channel=False):
         """
@@ -603,7 +604,22 @@ class SSDVGG:
     #         return weights
     #
     #     return _initializer
+    def __buildtransposeconv(self):
+        # self.transpose_block1 = conv_transpose_block(self.ssd_conv8_2, 128, 2, 5)
+        # self.transpose_block2 = conv_transpose_block(self.transpose_block1, 64, 2,3)
+        # self.transpose_block3 = conv_transpose_block(self.transpose_block2,32, 4, 2)
+        # self.logits_seg = slim.conv2d(self.transpose_block3, self.num_classes_for_seg_gt,
+        #                                     [1, 1], activation_fn=None, scope='logits_seg')
 
+        self.transpose_block1 = conv_transpose_block(self.vgg_conv5_3, 512, 4, 2)
+        self.transpose_block1 = self.transpose_block1 + self.vgg_conv4_3
+        self.transpose_block2 = conv_transpose_block(self.transpose_block1, 256, 4,2)
+
+        self.transpose_block3 = conv_transpose_block(self.transpose_block2, 128, 4, 2)
+        self.transpose_block3 = self.transpose_block3 + self.vgg_conv2_2
+        self.transpose_block4 = conv_transpose_block(self.transpose_block3, 64, 4, 2)
+        self.logits_seg = slim.conv2d(self.transpose_block4, self.num_classes_for_seg_gt,
+                                            [1, 1], activation_fn=None, scope='logits_seg')
 
     #---------------------------------------------------------------------------
     def __build_norms(self):
@@ -858,10 +874,16 @@ class SSDVGG:
                                        name='l2_loss')
 
             # Final loss
+
             # Shape: scalar
             self.loss = tf.add(self.conf_and_loc_loss,self.l2_loss,
                                name='loss')
             self.Segmentation_loss = tf.add(self.segmentation_loss, tf.constant(0.0),name= 'segmentation_loss')
+
+            # Shape: scalar # add l2 loss - Removed as of now
+            # self.loss = tf.add(self.conf_and_loc_loss,
+            #                    self.segmentation_loss,
+            #                    name='loss')
 
             self.Total_loss = tf.add(self.Segmentation_loss, self.loss, name='total_loss')
         #-----------------------------------------------------------------------
@@ -869,21 +891,29 @@ class SSDVGG:
         #-----------------------------------------------------------------------
         with tf.variable_scope('optimizer'):
             optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
+
             optimizer = optimizer.minimize(self.Total_loss, global_step=global_step,
                                            name='optimizer') #
-
-
 
         #-----------------------------------------------------------------------
         # Store the tensors
         #-----------------------------------------------------------------------
         self.optimizer = optimizer
+        # self.losses = {
+        #     'total': self.loss,
+        #     'localization': self.localization_loss,
+        #     'confidence': self.confidence_loss
+        #     #'l2': self.l2_loss
+        # }
+
         self.losses = {
+
             'total': self.Total_loss,
             'localization': self.localization_loss,
             'confidence': self.confidence_loss,
             'l2': self.l2_loss,
             'segmentation': self.Segmentation_loss
+
         }
 
     #---------------------------------------------------------------------------

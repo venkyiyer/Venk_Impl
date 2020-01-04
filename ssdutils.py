@@ -189,7 +189,6 @@ def decode_location(box, anchor):
     h = exp(box[3]/5) * anchor.size.h
     return Point(x, y), Size(w, h)
 
-#------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
 def decode_boxes(pred, anchors, confidence_threshold = 0.01, lid2name = {},

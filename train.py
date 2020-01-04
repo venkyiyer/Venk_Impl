@@ -27,15 +27,20 @@ import cv2
 import multiprocessing as mp
 import tensorflow as tf
 import numpy as np
+
 from sklearn.metrics import precision_score, \
     recall_score, confusion_matrix, classification_report, \
     accuracy_score, f1_score
 np.set_printoptions(threshold=sys.maxsize)
 import matplotlib.pyplot as plt
 
+from PIL import Image
+
+
 
 from average_precision import APCalculator, APs2mAP
 from training_data import TrainingData
+
 from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps
 from ssdvgg import SSDVGG
 from utils import *
@@ -66,6 +71,7 @@ def main():
                         help='data directory')
     parser.add_argument('--vgg-dir', default='vgg_graph',
                         help='directory for the VGG-16 model')
+
     parser.add_argument('--epochs', type=int, default=300,
                         help='number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
@@ -288,9 +294,6 @@ def main():
                 if len(training_imgs_samples) < 3:
                     saved_images = np.copy(x[:3])
 
-                feed = {net.image_input: x, net.labels: y, net.label_seg_gt:img_seg_gt} #
-                fcn32, result,loss_batch, _ = sess.run([net.fcn32_upsampled,net.result, net.losses,net.optimizer], feed_dict=feed)
-
 
                 if math.isnan(loss_batch['total']):
                     print('[!] total loss is NaN.')
@@ -306,6 +309,7 @@ def main():
 
                    if len(training_imgs_samples) < 3:
                       training_imgs_samples.append((saved_images[i], boxes))
+
 
             #-------------------------------------------------------------------
             # Validate
@@ -328,7 +332,6 @@ def main():
 
                 feed = {net.image_input: x, net.labels: y, net.label_seg_gt:img_seg_gt} #,
                 result,output_seg,loss_batch = sess.run([net.result,net.logits_seg, net.losses], feed_dict=feed)
-
 
                 output_image = np.array(output_seg[0,:,:,:])
                 output_seg_rev = reverse_one_hot(output_image)
