@@ -28,6 +28,7 @@ from ssdutils import box2array, compute_overlap, compute_location, anchors2array
 from utils import Size, Sample, Point, Box, abs2prop, prop2abs, Label
 from math import sqrt
 
+
 #-------------------------------------------------------------------------------
 class Transform:
     def __init__(self, **kwargs):
@@ -41,7 +42,13 @@ class ImageLoaderTransform(Transform):
     Load and image from the file specified in the Sample object
     """
     def __call__(self, data, label, gt):
-        return cv2.imread(gt.filename), label, gt, cv2.imread(gt.img_seg_gt)
+        seg_gt = cv2.imread(gt.seg_gt)
+        seg_gt_to_compare = cv2.imread(gt.seg_gt_to_compare)
+        seg_gt[seg_gt ==[192,224,224]]= 0
+        seg_gt_to_compare[seg_gt_to_compare == [192,224,224]] =0
+        cv2.imwrite('seg_gt_input.png', seg_gt)
+        cv2.imwrite('seg_gt_to_compare.png', seg_gt_to_compare)
+        return cv2.imread(gt.filename), label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 def process_overlap(overlap, box, anchor, matches, num_classes, vec):
@@ -70,7 +77,7 @@ class LabelCreatorTransform(Transform):
 
 
     #---------------------------------------------------------------------------
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt,seg_gt_to_compare):
         #-----------------------------------------------------------------------
         # Initialize the data vector and other variables
         #-----------------------------------------------------------------------
@@ -114,7 +121,7 @@ class LabelCreatorTransform(Transform):
             anchor  = self.anchors[overlap.idx]
             process_overlap(overlap, box, anchor, matches, self.num_classes, vec)
 
-        return data, vec, gt, img_seg
+        return data, vec, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class ResizeTransform(Transform):
@@ -122,24 +129,46 @@ class ResizeTransform(Transform):
     Resize an image
     Parameters: width, height, algorithms
     """
-    def __call__(self, data, label, gt, img_seg_onehot):
-        alg = random.choice(self.algorithms)
-        resized = cv2.resize(data, (self.width, self.height), interpolation=alg)
-        img_seg_onehot = cv2.resize(img_seg_onehot,(self.width, self.height), interpolation=alg)
-        return resized, label, gt, img_seg_onehot
-
-#-------------------------------------------------------------------------------
+    def __call__(self, data, label, gt, seg_gt_onehot, seg_gt_to_compare ):
+        #alg = random.choice(self.algorithms)
+        resized = cv2.resize(data, (self.width, self.height), interpolation=cv2.INTER_NEAREST)
+        seg_gt_onehot = cv2.resize(seg_gt_onehot,(self.width, self.height), interpolation=cv2.INTER_NEAREST)
+        seg_gt_to_compare = cv2.resize(seg_gt_to_compare, (self.width, self.height), interpolation=cv2.INTER_NEAREST)
+        return resized, label, gt, seg_gt_onehot, seg_gt_to_compare
+#-----------------------------------------------------------------------------
 class LabelCreatorSegment(Transform):
 
-    def __call__(self, data, label, gt, img_seg):
-        color = [[142,0,0], [60,20,220], [32,11,119]]
-        img_seg_onehot=[]
-        for color in color:
-            equality = np.equal(img_seg, color)
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
+        # #1=aeroplane, 2=bicycle, 3=bird, 4=boat, 5=bottle, 6=bus, 7=car , 8=cat, 9=chair, 10=cow, 11=diningtable, 12=dog, 13=horse, 14=motorbike, 15=person, 16=potted plant, 17=sheep, 18=sofa, 19=train, 20=tv/monitor
+        color = [[0,0,0],#black-background,
+                 [0,0,128],#maroon-aeroplane,
+                 [0,128,0],#darkgreen-bicycle
+                 [0,128,128],#gold-bird,
+                 [128,0,0],#darkblue-boat
+                 [128,0,128],#purple-bottle
+                 [128,128,0],#greenishblue-bus
+                 [128,128,128],#grey-car
+                 [0,0,64],#darkmaroon-cat
+                 [0,0,192],#red-chair
+                 [0,128,64],#darkgreen-cow
+                 [0,128,192],#yellowishgolden-dining table
+                 [128,0,64],#violet-dog
+                 [128,0,192],#pink -horse
+                 [128,128,64],#bluishgreen-motobike
+                 [128,128,192],#orangishpink-person,
+                 [0,64,0],#darkgreen-plant
+                 [0,64,128],#brown-sheep
+                 [0,192,0],#lightgreen-sofa
+                 [0,192,128],#lightgreen-train
+                 [128,64,0]]#darkblue-tv/monitor
+
+        seg_gt_onehot=[]
+        for colors in color:
+            equality = np.equal(seg_gt, colors)
             class_map = np.all(equality, axis=-1)
-            img_seg_onehot.append(class_map)
-        img_seg_onehot = np.stack(img_seg_onehot, axis=-1)
-        return data, label,gt, np.float32(img_seg_onehot)
+            seg_gt_onehot.append(class_map)
+        seg_gt_onehot = np.stack(seg_gt_onehot, axis=-1)
+        return data, label,gt, np.float32(seg_gt_onehot), seg_gt_to_compare
 
 
 class RandomTransform(Transform):
@@ -181,14 +210,14 @@ class BrightnessTransform(Transform):
     Transform brightness
     Parameters: delta
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         data = data.astype(np.float32)
         delta = random.randint(-self.delta, self.delta)
         data += delta
         data[data>255] = 255
         data[data<0] = 0
         data = data.astype(np.uint8)
-        return data, label, gt, img_seg
+        return data, label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class ContrastTransform(Transform):
@@ -196,14 +225,14 @@ class ContrastTransform(Transform):
     Transform contrast
     Parameters: lower, upper
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt,seg_gt, seg_gt_to_compare):
         data = data.astype(np.float32)
         delta = random.uniform(self.lower, self.upper)
         data *= delta
         data[data>255] = 255
         data[data<0] = 0
         data = data.astype(np.uint8)
-        return data, label, gt, img_seg
+        return data, label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class HueTransform(Transform):
@@ -211,7 +240,7 @@ class HueTransform(Transform):
     Transform hue
     Parameters: delta
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         data = cv2.cvtColor(data, cv2.COLOR_BGR2HSV)
         data = data.astype(np.float32)
         delta = random.randint(-self.delta, self.delta)
@@ -220,7 +249,7 @@ class HueTransform(Transform):
         data[0][data[0]<0] +=180
         data = data.astype(np.uint8)
         data = cv2.cvtColor(data, cv2.COLOR_HSV2BGR)
-        return data, label, gt, img_seg
+        return data, label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class SaturationTransform(Transform):
@@ -228,7 +257,7 @@ class SaturationTransform(Transform):
     Transform hue
     Parameters: lower, upper
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         data = cv2.cvtColor(data, cv2.COLOR_BGR2HSV)
         data = data.astype(np.float32)
         delta = random.uniform(self.lower, self.upper)
@@ -237,7 +266,7 @@ class SaturationTransform(Transform):
         data[1][data[1]<0] = 0
         data = data.astype(np.uint8)
         data = cv2.cvtColor(data, cv2.COLOR_HSV2BGR)
-        return data, label, gt, img_seg
+        return data, label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class ReorderChannelsTransform(Transform):
@@ -283,7 +312,7 @@ def transform_gt(gt, new_size, h_off, w_off):
         if box is None:
             continue
         boxes.append(box)
-    return Sample(gt.filename, boxes, new_size)
+    return Sample(gt.filename, boxes, new_size, gt.seg_gt, gt.seg_gt_to_compare)
 
 #-------------------------------------------------------------------------------
 class ExpandTransform(Transform):
@@ -291,8 +320,8 @@ class ExpandTransform(Transform):
     Expand the image and fill the empty space with the mean value
     Parameters: max_ratio, mean_value
     """
-    def __call__(self, data, label, gt, img_seg):
-        #-----------------------------------------------------------------------
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
+        #-----------------------------------------------------------------------<
         # Calculate sizes and offsets
         #-----------------------------------------------------------------------
         ratio = random.uniform(1, self.max_ratio)
@@ -313,7 +342,7 @@ class ExpandTransform(Transform):
         #-----------------------------------------------------------------------
         gt = transform_gt(gt, new_size, h_off, w_off)
 
-        return img, label, gt, img_seg
+        return img, label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class SamplerTransform(Transform):
@@ -322,12 +351,12 @@ class SamplerTransform(Transform):
     Params: min_scale, max_scale, min_aspect_ratio, max_aspect_ratio,
             min_jaccard_overlap
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         #-----------------------------------------------------------------------
         # Check whether to sample or not
         #-----------------------------------------------------------------------
         if not self.sample:
-            return data, label, gt, img_seg
+            return data, label, gt, seg_gt, seg_gt_to_compare
 
         #-----------------------------------------------------------------------
         # Retry sampling a couple of times
@@ -375,7 +404,7 @@ class SamplerTransform(Transform):
         data = data[box_arr[2]:box_arr[3], box_arr[0]:box_arr[1]]
         gt = transform_gt(gt, new_size, h_off, w_off)
 
-        return data, label, gt, img_seg
+        return data, label, gt, seg_gt, seg_gt_to_compare
 
 #-------------------------------------------------------------------------------
 class SamplePickerTransform(Transform):
@@ -383,10 +412,10 @@ class SamplePickerTransform(Transform):
     Run a bunch of sample transforms and return one of the produced samples
     Parameters: samplers
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         samples = []
         for sampler in self.samplers:
-            sample = sampler(data, label, gt, img_seg)
+            sample = sampler(data, label, gt, seg_gt, seg_gt_to_compare)
             if sample is not None:
                 samples.append(sample)
         return random.choice(samples)
@@ -396,14 +425,15 @@ class HorizontalFlipTransform(Transform):
     """
     Horizontally flip the image
     """
-    def __call__(self, data, label, gt, img_seg):
+    def __call__(self, data, label, gt, seg_gt, seg_gt_to_compare):
         data = cv2.flip(data, 1)
-        img_seg = cv2. flip(img_seg,1)
+        seg_gt = cv2.flip(seg_gt,1)
+        seg_gt_to_compare = cv2.flip(seg_gt_to_compare,1)
         boxes = []
         for box in gt.boxes:
             center = Point(1-box.center.x, box.center.y)
             box = Box(box.label, box.labelid, center, box.size)
             boxes.append(box)
-        gt = Sample(gt.filename, boxes, gt.imgsize)
+        gt = Sample(gt.filename, boxes, gt.imgsize, gt.seg_gt, gt.seg_gt_to_compare)
 
-        return data, label, gt, img_seg
+        return data, label, gt, seg_gt, seg_gt_to_compare

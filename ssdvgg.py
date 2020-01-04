@@ -25,10 +25,14 @@ import os
 import tensorflow as tf
 import numpy as np
 
+from math import ceil
+from tensorflow.python.framework import dtypes
+
 from urllib.request import urlretrieve
 from tqdm import tqdm
 import tensorflow.contrib.slim as slim
 
+VGG_MEAN = [103.939, 116.779, 123.68]
 #-------------------------------------------------------------------------------
 class DLProgress(tqdm):
     last_block = 0
@@ -116,15 +120,14 @@ class SSDVGG:
         """
         self.num_classes = num_classes+1
         self.num_vars = num_classes+5
-        self.num_classes_for_seg_gt = num_classes
+        self.num_classes_for_seg_gt = 21
         self.l2_loss = 0
         self.__download_vgg(vgg_dir, progress_hook)
         self.__load_vgg(vgg_dir)
-        #self.__bilinear_interpolation()
         if a_trous: self.__build_vgg_mods_a_trous()
         else: self.__build_vgg_mods()
         self.__build_ssd_layers()
-        self.__buildtransposeconv()
+        self._decoder()
         self.__build_norms()
         self.__select_feature_maps()
         self.__build_classifiers()
@@ -206,12 +209,26 @@ class SSDVGG:
         graph = tf.saved_model.loader.load(sess, ['vgg16'], vgg_dir+'/vgg')
         self.image_input = sess.graph.get_tensor_by_name('image_input:0')
         self.keep_prob   = sess.graph.get_tensor_by_name('keep_prob:0')
+
+        self.vgg_conv1_2 = sess.graph.get_tensor_by_name('conv1_2/Relu:0')
+        self.vgg_conv2_2 = sess.graph.get_tensor_by_name('conv2_2/Relu:0')
+        self.vgg_conv3_3 = sess.graph.get_tensor_by_name('conv3_3/Relu:0')
         self.vgg_conv4_3 = sess.graph.get_tensor_by_name('conv4_3/Relu:0')
         self.vgg_conv5_3 = sess.graph.get_tensor_by_name('conv5_3/Relu:0')
-        self.vgg_fc6_w   = sess.graph.get_tensor_by_name('fc6/weights:0')
-        self.vgg_fc6_b   = sess.graph.get_tensor_by_name('fc6/biases:0')
-        self.vgg_fc7_w   = sess.graph.get_tensor_by_name('fc7/weights:0')
-        self.vgg_fc7_b   = sess.graph.get_tensor_by_name('fc7/biases:0')
+
+        # Encoder outputs
+        self.fcn_in = sess.graph.get_tensor_by_name('pool5:0')
+        self.feed2 = sess.graph.get_tensor_by_name('pool4:0')
+        self.feed4 = sess.graph.get_tensor_by_name('pool3:0')
+        self.vgg_pool4 = sess.graph.get_tensor_by_name('pool4:0')
+        self.vgg_pool3 = sess.graph.get_tensor_by_name('pool3:0')
+        self.vgg_pool5 = sess.graph.get_tensor_by_name('pool5:0')
+        self.early_feat = sess.graph.get_tensor_by_name('conv4_3/Relu:0')
+
+        self.vgg_fc6_w = sess.graph.get_tensor_by_name('fc6/weights:0')
+        self.vgg_fc6_b = sess.graph.get_tensor_by_name('fc6/biases:0')
+        self.vgg_fc7_w = sess.graph.get_tensor_by_name('fc7/weights:0')
+        self.vgg_fc7_b = sess.graph.get_tensor_by_name('fc7/biases:0')
 
 
         layers = ['conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1',
@@ -222,32 +239,60 @@ class SSDVGG:
             self.l2_loss += sess.graph.get_tensor_by_name(l+'/L2Loss:0')
 
     #---------------------------------------------------------------------------
-
-    #---------------------------------------------------------------------------
-
-    def __bilinear_interpolation(self):
-        self.resize = bilinear_interpolation(self.vgg_conv5_3, size=[self.image_input[1], self.image_input[2]])
-
-    #---------------------------------------------------------------------------
     def __build_vgg_mods(self):
+        sess = self.session
         self.mod_pool5 = tf.nn.max_pool(self.vgg_conv5_3, ksize=[1, 3, 3, 1],
                                         strides=[1, 1, 1, 1], padding='SAME',
                                         name='mod_pool5')
 
         with tf.variable_scope('mod_conv6'):
-            x = tf.nn.conv2d(self.mod_pool5, self.vgg_fc6_w,
+
+            orig_w, orig_b = sess.run([self.vgg_fc6_w, self.vgg_fc6_b])
+            mod_w = np.zeros((3, 3, 512, 1024))
+            mod_b = np.zeros(1024)
+
+            for i in range(1024):
+                mod_b[i] = orig_b[4 * i]
+                for h in range(3):
+                    for w in range(3):
+                        mod_w[h, w, :, i] = orig_w[3 * h, 3 * w, :, 4 * i]
+
+            # -------------------------------------------------------------------
+            # Build the feature map
+            # -------------------------------------------------------------------
+            w = array2tensor(mod_w, 'filter')
+            b = array2tensor(mod_b, 'biases')
+            x = tf.nn.conv2d(self.mod_pool5, w,
                              strides=[1, 1, 1, 1], padding='SAME')
-            x = tf.nn.bias_add(x, self.vgg_fc6_b)
-            self.mod_conv6 = tf.nn.relu(x)
-            self.l2_loss += tf.nn.l2_loss(self.vgg_fc6_w)
+
+            x = tf.nn.bias_add(x, b)
+            x = tf.nn.relu(x)
+
+            self.mod_conv6 = x
+            self.l2_loss += tf.nn.l2_loss(w)
+
 
         with tf.variable_scope('mod_conv7'):
-            x = tf.nn.conv2d(self.mod_conv6, self.vgg_fc7_w,
-                             strides=[1, 1, 1, 1], padding='SAME')
-            x = tf.nn.bias_add(x, self.vgg_fc7_b)
+            orig_w, orig_b = sess.run([self.vgg_fc7_w, self.vgg_fc7_b])
+            mod_w = np.zeros((1, 1, 1024, 1024))
+            mod_b = np.zeros(1024)
+
+            for i in range(1024):
+                mod_b[i] = orig_b[4 * i]
+                for j in range(1024):
+                    mod_w[:, :, j, i] = orig_w[:, :, 4 * j, 4 * i]
+
+            # -------------------------------------------------------------------
+            # Build the feature map
+            # -------------------------------------------------------------------
+            w = array2tensor(mod_w, 'filter')
+            b = array2tensor(mod_b, 'biases')
+            x = tf.nn.conv2d(self.mod_conv6, w, strides=[1, 1, 1, 1],
+                             padding='SAME')
+            x = tf.nn.bias_add(x, b)
             x = tf.nn.relu(x)
             self.mod_conv7 = x
-            self.l2_loss += tf.nn.l2_loss(self.vgg_fc7_w)
+            self.l2_loss += tf.nn.l2_loss(w)
 
     #---------------------------------------------------------------------------
     def __build_vgg_mods_a_trous(self):
@@ -353,12 +398,211 @@ class SSDVGG:
         self.ssd_conv12_2 = self.__with_loss(x, l2)
 
     #---------------------------------------------------------------------------
-    def __buildtransposeconv(self):
-        self.transpose_block1 = conv_transpose_block(self.ssd_conv8_2, 128, 2, 5)
-        self.transpose_block2 = conv_transpose_block(self.transpose_block1, 64, 2,3)
-        self.transpose_block3 = conv_transpose_block(self.transpose_block2,32, 4, 2)
-        self.logits_seg = slim.conv2d(self.transpose_block3, self.num_classes_for_seg_gt,
-                                            [1, 1], activation_fn=None, scope='logits_seg')
+
+    def _bilinear_initializer(self, num_classes_for_seg_gt, kernel_size, cross_channel=False):
+        """
+        Creates a weight matrix that performs bilinear interpolation.
+
+        :param n_channels: The number of channels, one per semantic class.
+        :param kernel_size: The filter size, which is 2x the up-sampling factor,
+            eg. a kernel/filter size of 4 up-samples 2x.
+        :param cross_channel: Add contribution from all other channels to each channel.
+            Defaults to False, meaning that each channel is up-sampled separately without
+            contribution from the other channels.
+
+        :return: A tf.constant_initializer with the weight initialized to bilinear interpolation.
+        """
+        # Make a 2D bilinear kernel suitable for up-sampling of the given (h, w) size.
+        upscale_factor = (kernel_size + 1) // 2
+        if kernel_size % 2 == 1:
+            center = upscale_factor - 1
+        else:
+            center = upscale_factor - 0.5
+        og = np.ogrid[:kernel_size, :kernel_size]
+        bilinear = (1 - abs(og[0] - center) / upscale_factor) * (1 - abs(og[1] - center) / upscale_factor)
+
+        # The kernel filter needs to have shape [kernel_height, kernel_width, in_channels, num_filters]
+        weights = np.zeros([kernel_size, kernel_size, num_classes_for_seg_gt, num_classes_for_seg_gt])
+        if cross_channel:
+            for i in range(num_classes_for_seg_gt):
+                for j in range(num_classes_for_seg_gt):
+                    weights[:, :, i, j] = bilinear
+        else:
+            for i in range(num_classes_for_seg_gt):
+                weights[:, :, i, i] = bilinear
+
+        return tf.compat.v1.constant_initializer(value=weights)
+    #---------------------------------------------------------------------------
+    def _decoder(self):
+
+        self.conv7_classes = tf.compat.v1.layers.conv2d(self.mod_conv7, filters=self.num_classes_for_seg_gt, kernel_size=1,
+                                                        kernel_initializer=tf.compat.v1.zeros_initializer(),
+                                                        name="conv7_classes")
+        self.pool4_classes = tf.compat.v1.layers.conv2d(self.vgg_pool4, filters=self.num_classes_for_seg_gt, kernel_size=1,
+                                                        kernel_initializer=tf.compat.v1.zeros_initializer(),
+                                                        name="pool4_classes")
+        self.fcn32_upsampled = tf.compat.v1.layers.conv2d_transpose(self.conv7_classes, filters=self.num_classes_for_seg_gt,
+                                                                     kernel_size=4, strides=2, padding='SAME',
+                                                                     use_bias=False,
+                                                                     kernel_initializer=self._bilinear_initializer(self.num_classes_for_seg_gt, 4),
+                                                                     name="fcn32_upsampled")
+        self.skip_1 = tf.add(self.pool4_classes, self.conv7_classes, name="skip_cnx_1")
+
+        self.pool3_classes = tf.compat.v1.layers.conv2d(self.vgg_pool3, filters=self.num_classes_for_seg_gt, kernel_size=1,
+                                                        kernel_initializer=tf.compat.v1.zeros_initializer(),
+                                                        name="pool3_classes")
+
+        self.fcn16_upsampled = tf.compat.v1.layers.conv2d_transpose(self.skip_1, filters=self.num_classes_for_seg_gt,
+                                                                    kernel_size=4, strides=2, padding='SAME',
+                                                                    use_bias=False,
+                                                                    kernel_initializer=self._bilinear_initializer(self.num_classes_for_seg_gt, 4),
+                                                                    name="fcn16_upsampled")
+
+        self.skip_2 = tf.add(self.pool3_classes, self.fcn16_upsampled, name="skip_cnx_2")
+
+
+        self.logits_seg = tf.image.resize(self.skip_2, (300,300), method=tf.image.ResizeMethod.BILINEAR)
+
+    #---------------------------------------------------------------------------
+
+    # def _decoder(self):
+    #     fcn_in = self.fcn_in
+    #     num_classes = self.num_classes_for_seg_gt
+    #     self.wd = 5e-4
+    #     sd = 1
+    #     skip = True
+    #
+    #     fcn_in = tf.Print(fcn_in, [tf.shape(fcn_in)],
+    #                       message='Shape of %s' % fcn_in.name,
+    #                       summarize=4, first_n=1)
+    #
+    #     he_init = tf.contrib.layers.variance_scaling_initializer()
+    #
+    #     l2_regularizer = tf.contrib.layers.l2_regularizer(self.wd)
+    #
+    #     # Build score_fr layer
+    #     score_fr = tf.layers.conv2d(
+    #         fcn_in, kernel_size=[1, 1], filters=num_classes, padding='SAME',
+    #         name='score_fr', kernel_initializer=he_init,
+    #         kernel_regularizer=l2_regularizer)
+    #
+    #
+    #     # Do first upsampling
+    #     upscore2 = self._upscore_layer(
+    #         score_fr, upshape=tf.shape(self.feed2),
+    #         num_classes=num_classes, name='upscore2', ksize=4, stride=2)
+    #
+    #     he_init2 = tf.contrib.layers.variance_scaling_initializer(factor=2.0*sd)
+    #     # Score feed2
+    #     score_feed2 = tf.layers.conv2d(
+    #         self.feed2, kernel_size=[1, 1], filters=num_classes,
+    #         padding='SAME', name='score_feed2', kernel_initializer=he_init2,
+    #         kernel_regularizer=l2_regularizer)
+    #
+    #
+    #     if skip:
+    #         # Create skip connection
+    #         fuse_feed2 = tf.add(upscore2, score_feed2)
+    #     else:
+    #         fuse_feed2 = upscore2
+    #         fuse_feed2.set_shape(score_feed2.shape)
+    #
+    #     # Do second upsampling
+    #     upscore4 = self._upscore_layer(
+    #         fuse_feed2, upshape=tf.shape(self.feed4),
+    #         num_classes=num_classes, name='upscore4', ksize=4, stride=2)
+    #
+    #     #self.logits_seg = tf.image.resize(images=upscore4, size=[300, 300],
+    #                                       #method=tf.image.ResizeMethod.BILINEAR)
+    #     he_init4 = tf.contrib.layers.variance_scaling_initializer(factor=2.0*sd*sd)
+    #     # Score feed4
+    #     score_feed4 = tf.layers.conv2d(
+    #     self.feed4, kernel_size=[1, 1], filters=num_classes,
+    #     padding='SAME', name='score_feed4', kernel_initializer=he_init4,
+    #     kernel_regularizer=l2_regularizer)
+    #
+    #     if skip:
+    #     # Create second skip connection
+    #         fuse_pool3 = tf.add(upscore4, score_feed4)
+    #     else:
+    #         fuse_pool3 = upscore4
+    #         fuse_pool3.set_shape(score_feed4.shape)
+    #
+    #     #Do final upsampling
+    #     upscore32 = self._upscore_layer(
+    #         fuse_pool3, upshape=tf.shape(self.image_input),
+    #         num_classes=num_classes, name='upscore32', ksize=16, stride=8)
+    #
+    #     self.logits_seg = upscore32
+    #
+    # #------------------------------------------------------------------------------------------
+    #
+    # def _upscore_layer(self, bottom, upshape,
+    #                    num_classes, name,
+    #                    ksize=4, stride=2):
+    #     strides = [1, stride, stride, 1]
+    #     with tf.variable_scope(name):
+    #         in_features = bottom.get_shape()[3].value
+    #
+    #         new_shape = [upshape[0], upshape[1], upshape[2], num_classes]
+    #         output_shape = tf.stack(new_shape)
+    #
+    #         f_shape = [ksize, ksize, num_classes, in_features]
+    #
+    #         up_init = self.upsample_initilizer()
+    #
+    #         weights = tf.get_variable(name="weights", initializer=up_init,
+    #                                   shape=f_shape)
+    #
+    #         tf.add_to_collection(tf.GraphKeys.WEIGHTS, weights)
+    #
+    #         deconv = tf.nn.conv2d_transpose(bottom, weights, output_shape,
+    #                                         strides=strides, padding='SAME')
+    #
+    #         deconv = tf.Print(deconv, [tf.shape(deconv)],
+    #                           message='Shape of %s' % name,
+    #                           summarize=4, first_n=1)
+    #
+    #
+    #     return deconv
+    # # ---------------------------------------------------------------------------------------
+    #
+    # def upsample_initilizer(self, dtype=dtypes.float32):
+    #     """Returns an initializer that creates filter for bilinear upsampling.
+    #     Use a transposed convolution layer with ksize = 2n and stride = n to
+    #     perform upsampling by a factor of n.
+    #     """
+    #     if not dtype.is_floating:
+    #         raise TypeError('Cannot create initializer for non-float point type.')
+    #
+    #     def _initializer(shape, dtype=dtype, partition_info=None):
+    #         """Initializer function."""
+    #         if not dtype.is_floating:
+    #             raise TypeError('Cannot create initializer for non-floating type.')
+    #
+    #         width = shape[0]
+    #         height = shape[0]
+    #         f = ceil(width/2.0)
+    #         c = (2 * f - 1 - f % 2) / (2.0 * f)
+    #         bilinear = np.zeros([shape[0], shape[1]])
+    #         for x in range(width):
+    #             for y in range(height):
+    #                 value = (1 - abs(x / f - c)) * (1 - abs(y / f - c))
+    #                 bilinear[x, y] = value
+    #         weights = np.zeros(shape)
+    #         for i in range(shape[2]):
+    #             '''
+    #             the next line of code is correct as given
+    #             [several issues were opened ...]
+    #             we only want to scale each feature,
+    #             so there is no interaction between channels,
+    #             that is why only the diagonal i, i is initialized
+    #             '''
+    #             weights[:, :, i, i] = bilinear
+    #
+    #         return weights
+    #
+    #     return _initializer
 
 
     #---------------------------------------------------------------------------
@@ -402,15 +646,16 @@ class SSDVGG:
                                         axis=-1, name='result')
 
     #---------------------------------------------------------------------------
-    def build_optimizer(self, learning_rate=0.001, weight_decay=0.0005,
-                        momentum=0.9, global_step=None):
+    def build_optimizer(self, learning_rate=0.00001, weight_decay=0.0005,
+                        momentum=0.0009, global_step=None):
 
         self.labels = tf.placeholder(tf.float32, name='labels',
                                     shape=[None, None, self.num_vars])
         self.label_seg_gt = tf.placeholder(tf.float32, name='seg_gt_labels',
                                            shape=[None,None,None,self.num_classes_for_seg_gt])
 
-        with tf.variable_scope('segmentation_loss'):
+        with tf.variable_scope(''
+                               ''):
             self.segmentation_loss = tf.reduce_mean(
                 tf.nn.softmax_cross_entropy_with_logits(logits=self.logits_seg,
                                                         labels=self.label_seg_gt))
@@ -613,28 +858,32 @@ class SSDVGG:
                                        name='l2_loss')
 
             # Final loss
-            # Shape: scalar # add l2 loss - Removed as of now
-            self.loss = tf.add(self.conf_and_loc_loss,
-                               self.segmentation_loss,
+            # Shape: scalar
+            self.loss = tf.add(self.conf_and_loc_loss,self.l2_loss,
                                name='loss')
+            self.Segmentation_loss = tf.add(self.segmentation_loss, tf.constant(0.0),name= 'segmentation_loss')
 
+            self.Total_loss = tf.add(self.Segmentation_loss, self.loss, name='total_loss')
         #-----------------------------------------------------------------------
         # Build the optimizer
         #-----------------------------------------------------------------------
         with tf.variable_scope('optimizer'):
             optimizer = tf.train.MomentumOptimizer(learning_rate, momentum)
-            optimizer = optimizer.minimize(self.loss, global_step=global_step,
-                                           name='optimizer')
+            optimizer = optimizer.minimize(self.Total_loss, global_step=global_step,
+                                           name='optimizer') #
+
+
 
         #-----------------------------------------------------------------------
         # Store the tensors
         #-----------------------------------------------------------------------
         self.optimizer = optimizer
         self.losses = {
-            'total': self.loss,
+            'total': self.Total_loss,
             'localization': self.localization_loss,
-            'confidence': self.confidence_loss
-            #'l2': self.l2_loss
+            'confidence': self.confidence_loss,
+            'l2': self.l2_loss,
+            'segmentation': self.Segmentation_loss
         }
 
     #---------------------------------------------------------------------------

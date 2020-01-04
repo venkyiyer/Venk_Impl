@@ -4,8 +4,11 @@ import cv2
 
 import tensorflow as tf
 import numpy as np
-
+import os
 from collections import namedtuple
+from sklearn.metrics import precision_score, \
+    recall_score, confusion_matrix, classification_report, \
+    accuracy_score, f1_score
 
 def initialize_uninitialized_variables(sess):
     """
@@ -27,19 +30,18 @@ def initialize_uninitialized_variables(sess):
 Label   = namedtuple('Label',   ['name', 'color'])
 Size    = namedtuple('Size',    ['w', 'h'])
 Point   = namedtuple('Point',   ['x', 'y'])
-Sample  = namedtuple('Sample',  ['filename', 'boxes', 'imgsize','img_seg_gt'])
+Sample  = namedtuple('Sample',  ['filename', 'boxes', 'imgsize','seg_gt', 'seg_gt_to_compare'])
 Box     = namedtuple('Box',     ['label', 'labelid', 'center', 'size'])
 Score   = namedtuple('Score',   ['idx', 'score'])
 Overlap = namedtuple('Overlap', ['best', 'good'])
+
 
 def load_data_source(data_source):
     """
     Load a data source given it's name
     """
     source_module = __import__('source_'+data_source)
-    print("source module", source_module)
     get_source    = getattr(source_module, 'get_source')
-    print("get_source", get_source)
     return get_source()
 
 def str2bool(v):
@@ -115,10 +117,190 @@ def draw_box(img, box, color):
                 (255, 255, 255), 1, cv2.LINE_AA)
     alpha = 0.8
     cv2.addWeighted(img_box, alpha, img, 1.-alpha, 0, img)
+#------------------------------------------------------------------------------
+
+def one_hot_encode(image):
+    color = [[0, 0, 0],  # black-background,
+             [0, 0, 128],  # maroon-aeroplane,
+             [0, 128, 0],  # darkgreen-bicycle
+             [0, 128, 128],  # gold-bird,
+             [128, 0, 0],  # darkblue-boat
+             [128, 0, 128],  # purple-bottle
+             [128, 128, 0],  # greenishblue-bus
+             [128, 128, 128],  # grey-car
+             [0, 0, 64],  # darkmaroon-cat
+             [0, 0, 192],  # red-chair
+             [0, 128, 64],  # darkgreen-cow
+             [0, 128, 192],  # yellowishgolden-dining table
+             [128, 0, 64],  # violet-dog
+             [128, 0, 192],  # pink -horse
+             [128, 128, 64],  # bluishgreen-motobike
+             [128, 128, 192],  # orangishpink-person,
+             [0, 64, 0],  # darkgreen-plant
+             [0, 64, 128],  # brown-sheep
+             [0, 192, 0],  # lightgreen-sofa
+             [0, 192, 128],  # lightgreen-train
+             [128, 64, 0]]  # darkblue-tv/monitor
+    img_onehot = []
+    for colors in color:
+        equality = np.equal(image, colors)
+        class_map = np.all(equality, axis=-1)
+        img_onehot.append(class_map)
+    one_hot_encoded = np.stack(img_onehot, axis=-1)
+    return  one_hot_encoded
+
+#------------------------------------------------------------------------------
+def colour_code_segmentation(image):
+    """
+    Given a 1-channel array of class keys, colour code the segmentation results.
+
+    # Arguments
+        image: single channel array where each value represents the class key.
+        label_values
+
+    # Returns
+        Colour coded image for segmentation visualization
+    """
+
+    # w = image.shape[0]
+    # h = image.shape[1]
+    # x = np.zeros([w,h,3])
+    # colour_codes = label_values
+    # for i in range(0, w):
+    #     for j in range(0, h):
+    #         x[i, j, :] = colour_codes[int(image[i, j])]
+
+    label_values=[[0,0,0],
+                 [0,0,128],
+                 [0,128,0],
+                 [0,128,128],
+                 [128,0,0],
+                 [128,0,128],
+                 [128,128,0],
+                 [128,128,128],
+                 [0,0,64],
+                 [0,0,192],
+                 [0,128,64],
+                 [0,128,192],
+                 [128,0,64],
+                 [128,0,192],
+                 [128,128,64],
+                 [128,128,192],
+                 [0,64,0],
+                 [0,64,128],
+                 [0,192,0],
+                 [0,192,128],
+                 [128,64,0]]
+
+    colour_codes = np.array(label_values)
+    x = colour_codes[image.astype(int)]
+
+    return x
+
+#----------------------------------------------------------------------------------
+
+def reverse_one_hot(image):
+    """
+    Transform a 2D array in one-hot format (depth is num_classes),
+    to a 2D array with only 1 channel, where each pixel value is
+    the classified class key.
+
+    # Arguments
+        image: The one-hot format image
+
+    # Returns
+        A 2D array with the same width and hieght as the input, but
+        with a depth size of 1, where each pixel value is the classified
+        class key.
+    """
+    # w = image.shape[0]
+    # h = image.shape[1]
+    # x = np.zeros([w,h,1])
+
+    # for i in range(0, w):
+    #     for j in range(0, h):
+    #         index, value = max(enumerate(image[i, j, :]), key=operator.itemgetter(1))
+    #         x[i, j] = index
+
+    x = np.argmax(image, axis=-1)
+    return x
+#------------------------------------------------------------------------------
+
+def filepath_to_name(full_name):
+    file_name = os.path.basename(full_name)
+    file_name = os.path.splitext(file_name)[0]
+    return file_name
 
 
-#PrecisionSummary(sess, summary_writer, 'training',
-#                                       td.lname2id.keys(), restore)
+#-------------------------------------------------------------------------------
+
+def compute_global_accuracy(pred, label):
+    total = len(label)
+    count = 0.0
+    for i in range(total):
+        if pred[i] == label[i]:
+            count = count + 1.0
+    return float(count) / float(total)
+#-------------------------------------------------------------------------------
+def compute_class_accuracies(pred, label, num_classes):
+    total = []
+    for val in range(num_classes):
+        total.append((label == val).sum())
+
+    count = [0.0] * num_classes
+    for i in range(len(label)):
+        if pred[i] == label[i]:
+            count[int(pred[i])] = count[int(pred[i])] + 1.0
+
+    # If there are no pixels from a certain class in the GT,
+    # it returns NAN because of divide by zero
+    # Replace the nans with a 1.0.
+    accuracies = []
+    for i in range(len(total)):
+        if total[i] == 0:
+            accuracies.append(1.0)
+        else:
+            accuracies.append(count[i] / total[i])
+
+    return accuracies
+#-------------------------------------------------------------------------------
+
+def compute_mean_iou(pred, label):
+
+    unique_labels = np.unique(label)
+    num_unique_labels = len(unique_labels);
+
+    I = np.zeros(num_unique_labels)
+    U = np.zeros(num_unique_labels)
+
+    for index, val in enumerate(unique_labels):
+        pred_i = pred == val
+        label_i = label == val
+
+        I[index] = float(np.sum(np.logical_and(label_i, pred_i)))
+        U[index] = float(np.sum(np.logical_or(label_i, pred_i)))
+
+
+    mean_iou = np.mean(I / U)
+    return mean_iou
+#------------------------------------------------------------------------------
+
+def evaluate_segmentation(pred, label, num_classes, score_averaging="weighted"):
+    flat_pred = pred.flatten()
+    flat_label = label.flatten()
+
+    global_accuracy = compute_global_accuracy(flat_pred, flat_label)
+    class_accuracies = compute_class_accuracies(flat_pred, flat_label, num_classes)
+
+    prec = precision_score(flat_pred, flat_label, average=score_averaging)
+    rec = recall_score(flat_pred, flat_label, average=score_averaging)
+    f1 = f1_score(flat_pred, flat_label, average=score_averaging)
+
+    iou = compute_mean_iou(flat_pred, flat_label)
+
+    return global_accuracy, class_accuracies, prec, rec, f1, iou
+
+#-------------------------------------------------------------------------------
 class PrecisionSummary:
     #---------------------------------------------------------------------------
     def __init__(self, session, writer, sample_name, labels, restore=False):
@@ -180,9 +362,11 @@ class ImageSummary:
         sess = session
         sum_name = sample_name+'_img'
         ph_name = sample_name+'_img_ph'
+
         if restore:
             self.img_placeholder = sess.graph.get_tensor_by_name(ph_name+':0')
             self.img_summary_op = sess.graph.get_tensor_by_name(sum_name+':0')
+
         else:
             self.img_placeholder = tf.placeholder(tf.float32, name=ph_name,
                                                   shape=[None, None, None, 3])
@@ -205,6 +389,39 @@ class ImageSummary:
         self.writer.add_summary(summary, epoch)
 
 #-------------------------------------------------------------------------------
+class ImageSummary_Segmentation:
+    # ---------------------------------------------------------------------------
+    def __init__(self, session, writer, sample_name, colors, restore=False):
+        self.session = session
+        self.writer = writer
+        self.colors = colors
+
+        sess = session
+        sum_name = sample_name + '_img'
+        ph_name = sample_name + '_img_ph'
+
+        if restore:
+            self.img_placeholder = sess.graph.get_tensor_by_name(ph_name + ':0')
+            self.img_summary_op = sess.graph.get_tensor_by_name(sum_name + ':0')
+
+        else:
+            self.img_placeholder = tf.placeholder(tf.float32, name=ph_name,
+                                                  shape=[None, None, None, 3])
+            self.img_summary_op = tf.summary.image(sum_name,
+                                                   self.img_placeholder)
+
+    # ---------------------------------------------------------------------------
+    def push(self, epoch, samples):
+        #imgs = np.zeros((3, 512, 512, 3))
+        for sample in samples:
+            sample = cv2.cvtColor(np.uint8(sample), cv2.COLOR_RGB2BGR)
+
+        feed = {self.img_placeholder: sample}
+        summary = self.session.run(self.img_summary_op, feed_dict=feed)
+        self.writer.add_summary(summary, epoch)
+
+
+#-------------------------------------------------------------------------------
 class LossSummary:
     #---------------------------------------------------------------------------
     def __init__(self, session, writer, sample_name, num_samples,
@@ -212,7 +429,7 @@ class LossSummary:
         self.session = session
         self.writer = writer
         self.num_samples = num_samples
-        self.loss_names = ['total', 'localization', 'confidence'] # removing l2 loss as of now. tf.add problem*
+        self.loss_names = ['total', 'localization', 'confidence', 'l2','segmentation']
         self.loss_values = {}
         self.placeholders = {}
 

@@ -51,6 +51,8 @@ class TrainingData:
         nones = [None] * len(train_samples)
         train_samples = list(zip(nones, nones, train_samples))
         nones = [None] * len(valid_samples)
+        valid_samples_name = valid_samples
+        valid_ = valid_samples[0]
         valid_samples = list(zip(nones, nones, valid_samples))
 
         #-----------------------------------------------------------------------
@@ -90,11 +92,12 @@ class TrainingData:
             labels = []
             gt_boxes = []
             img_seg_gt = []
+            imgseg_gt_to_compare = []
             for s in samples:
                 done = False
                 counter = 0
                 while not done and counter < 50:
-                    image, label, gt, img_seg_onehot = run_transforms(s)
+                    image, label, gt, img_seg_onehot, seg_gt_to_compare = run_transforms(s)
                     num_bg = np.count_nonzero(label[:, self.num_classes])
                     done = num_bg < label.shape[0]
                     counter += 1
@@ -103,12 +106,14 @@ class TrainingData:
                 labels.append(label.astype(np.float32))
                 gt_boxes.append(gt.boxes)
                 img_seg_gt.append(img_seg_onehot.astype(np.float32))
+                imgseg_gt_to_compare.append(seg_gt_to_compare.astype(np.float32))
 
             images = np.array(images, dtype=np.float32)
             labels = np.array(labels, dtype=np.float32)
             img_seg_gt = np.array(img_seg_gt, dtype= np.float32)
+            imgseg_gt_to_compare = np.array(imgseg_gt_to_compare, dtype= np.float32)
 
-            return images, labels, gt_boxes, img_seg_gt
+            return images, labels, gt_boxes, img_seg_gt, imgseg_gt_to_compare
 
 
         #-----------------------------------------------------------------------
@@ -122,7 +127,7 @@ class TrainingData:
                 except q.Empty:
                     break
 
-                images, labels, gt_boxes, img_seg_gt = process_samples(samples)
+                images, labels, gt_boxes, img_seg_gt, seg_gt_to_compare = process_samples(samples)
 
                 #---------------------------------------------------------------
                 # Pad the result in the case where we don't have enough samples
@@ -147,7 +152,7 @@ class TrainingData:
             #-------------------------------------------------------------------
             # Set up the parallel generator
             #-------------------------------------------------------------------
-            if num_workers > 5:
+            if num_workers > 7:
                 #---------------------------------------------------------------
                 # Set up the queues
                 #---------------------------------------------------------------
@@ -209,7 +214,7 @@ class TrainingData:
             else:
                 for offset in range(0, len(sample_list), batch_size):
                     samples = sample_list[offset:offset+batch_size]
-                    images, labels, gt_boxes, img_seg_gt = process_samples(samples)
-                    yield images, labels, gt_boxes, img_seg_gt
+                    images, labels, gt_boxes, img_seg_gt, imgseg_gt_to_compare = process_samples(samples)
+                    yield images, labels, gt_boxes, img_seg_gt, imgseg_gt_to_compare
 
         return gen_batch

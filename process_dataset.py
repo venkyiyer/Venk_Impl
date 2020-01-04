@@ -8,13 +8,32 @@ import numpy as np
 
 from transforms import *
 from ssdutils import get_preset_by_name
-from utils import load_data_source, str2bool
+from utils import load_data_source, str2bool, draw_box
 from tqdm import tqdm
 
 if sys.version_info[0] < 3:
     print("This is a Python 3 program. Use Python 3 or higher.")
     sys.exit(1)
-    
+
+def annotate(data_dir, samples, colors, sample_name):
+    """
+    Draw the bounding boxes on the sample images
+    :param data_dir: the directory where the dataset's files are stored
+    :param samples:  samples to be processed
+    :param colors:   a dictionary mapping class name to a BGR color tuple
+    :param colors:   name of the sample
+    """
+    result_dir = data_dir+'/annotated/'+sample_name.strip()+'/'
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
+
+    for sample in tqdm(samples, desc=sample_name, unit='samples'):
+        img    = cv2.imread(sample.filename)
+        basefn = os.path.basename(sample.filename)
+        for box in sample.boxes:
+            draw_box(img, box, colors[box.label])
+        cv2.imwrite(result_dir+basefn, img)
+
 #-------------------------------------------------------------------------------
 def build_sampler(overlap, trials):
     return SamplerTransform(sample=True, min_scale=0.3, max_scale=1.0,
@@ -104,7 +123,8 @@ def build_train_transforms(preset, num_classes, sampler_trials, expand_prob):
         tf_hue,
         tf_saturation,
         #tf_rnd_reorder_channels,
-        tf_rnd_expand,
+        tf_expand,
+        #tf_rnd_expand,
         tf_sample_picker,
         tf_flip,
         LabelCreatorTransform(preset=preset, num_classes=num_classes),
@@ -131,9 +151,9 @@ def main():
     # Parse the commandline
     #---------------------------------------------------------------------------
     parser = argparse.ArgumentParser(description='Process a dataset for SSD')
-    parser.add_argument('--data-source', default='Kitti',
+    parser.add_argument('--data-source', default='VOC',
                         help='data source')
-    parser.add_argument('--data-dir', default='KittiData',
+    parser.add_argument('--data-dir', default='VOC',
                         help='data directory')
     parser.add_argument('--validation-fraction', type=float, default=0.025,
                         help='fraction of the data to be used for validation')
@@ -141,14 +161,14 @@ def main():
                         help='probability of running sample expander')
     parser.add_argument('--sampler-trials', type=int, default=50,
                         help='number of time a sampler tries to find a sample')
-    parser.add_argument('--annotate', type=str2bool, default='False',
+    parser.add_argument('--annotate', type=str2bool, default='True',
                         help="Annotate the data samples")
     parser.add_argument('--compute-td', type=str2bool, default='True',
                         help="Compute training data")
     parser.add_argument('--preset', default='vgg300',
                         choices=['vgg300', 'vgg512'],
                         help="The neural network preset")
-    parser.add_argument('--process-test', type=str2bool, default='False',
+    parser.add_argument('--process-test', type=str2bool, default='True',
                         help="process the test dataset")
     args = parser.parse_args()
 
@@ -168,7 +188,6 @@ def main():
     print('[i] Configuring the data source...')
     try:
         source = load_data_source(args.data_source)
-        print("source",source)
         source.load_trainval_data(args.data_dir, args.validation_fraction)
         if args.process_test:
             source.load_test_data(args.data_dir)
@@ -176,6 +195,7 @@ def main():
         print('[i] # validation samples: ', source.num_valid)
         print('[i] # testing samples:    ', source.num_test)
         print('[i] # classes:            ', source.num_classes)
+        print('[i] # classes_seg:        ', source.colors_seg_classes)
     except (ImportError, AttributeError, RuntimeError) as e:
         print('[!] Unable to load data source:', str(e))
         return 1

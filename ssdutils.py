@@ -65,7 +65,7 @@ SSD_PRESETS = {
 # Default box parameters both in terms proportional to image dimensions
 #-------------------------------------------------------------------------------
 Anchor = namedtuple('Anchor', ['center', 'size', 'x', 'y', 'scale', 'map'])
-color = [[142,0,0], [60,20,220], [32,11,119]]
+#color = [[142,0,0], [60,20,220], [32,11,119]]
 #-------------------------------------------------------------------------------
 def get_preset_by_name(pname):
     if not pname in SSD_PRESETS:
@@ -190,18 +190,6 @@ def decode_location(box, anchor):
     return Point(x, y), Size(w, h)
 
 #------------------------------------------------------------------------------
-
-def reverse_one_hot(image):
-    x = np.argmax(image, axis=-1)
-    return x
-
-#------------------------------------------------------------------------------
-
-def colour_code_segmentation(image, label_values):
-    colour_codes = np.array(label_values)
-    x = colour_codes[image.astype(int)]
-
-    return x
 
 #-------------------------------------------------------------------------------
 def decode_boxes(pred, anchors, confidence_threshold = 0.01, lid2name = {},

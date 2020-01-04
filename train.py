@@ -27,15 +27,20 @@ import cv2
 import multiprocessing as mp
 import tensorflow as tf
 import numpy as np
+from sklearn.metrics import precision_score, \
+    recall_score, confusion_matrix, classification_report, \
+    accuracy_score, f1_score
+np.set_printoptions(threshold=sys.maxsize)
+import matplotlib.pyplot as plt
 
 
 from average_precision import APCalculator, APs2mAP
 from training_data import TrainingData
-from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps, reverse_one_hot, colour_code_segmentation, color
+from ssdutils import get_anchors_for_preset, decode_boxes, suppress_overlaps
 from ssdvgg import SSDVGG
 from utils import *
 from tqdm import tqdm
-
+from source_VOC import  Colour_code_segmentation
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 if sys.version_info[0] < 3:
@@ -55,31 +60,31 @@ def main():
     # Parse the commandline
     #---------------------------------------------------------------------------
     parser = argparse.ArgumentParser(description='Train the SSD')
-    parser.add_argument('--name', default='test',
+    parser.add_argument('--name', default='test-3000Dec',
                         help='project name')
-    parser.add_argument('--data-dir', default='KittiData',
+    parser.add_argument('--data-dir', default='VOC',
                         help='data directory')
     parser.add_argument('--vgg-dir', default='vgg_graph',
                         help='directory for the VGG-16 model')
-    parser.add_argument('--epochs', type=int, default=3,
+    parser.add_argument('--epochs', type=int, default=300,
                         help='number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
-    parser.add_argument('--tensorboard-dir', default="tb",
+    parser.add_argument('--tensorboard-dir', default="tb-3000Dec",
                         help='name of the tensorboard data directory')
-    parser.add_argument('--checkpoint-interval', type=int, default=3,
+    parser.add_argument('--checkpoint-interval', type=int, default=10,
                         help='checkpoint interval')
     parser.add_argument('--lr-values', type=str, default='0.00001; 0.00001;0.00001',
                         help='learning rate values')
     parser.add_argument('--lr-boundaries', type=str, default='320000;400000',
                         help='learning rate chage boundaries (in batches)')
-    parser.add_argument('--momentum', type=float, default=0.9,
+    parser.add_argument('--momentum', type=float, default=0.0009,
                         help='momentum for the optimizer')
     parser.add_argument('--weight-decay', type=float, default=0.0005,
                         help='L2 normalization factor')
     parser.add_argument('--continue-training', type=str2bool, default='False',
                         help='continue training from the latest checkpoint')
-    parser.add_argument('--num-workers', type=int, default=4,
+    parser.add_argument('--num-workers', type=int, default=6,
                         help='number of parallel generators')
 
     args = parser.parse_args()
@@ -168,7 +173,9 @@ def main():
     #---------------------------------------------------------------------------
     # Create the network
     #---------------------------------------------------------------------------
-    with tf.Session() as sess:
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = 0.8
+    with tf.Session(config=config) as sess:
         print('[i] Creating the model...')
         n_train_batches = int(math.ceil(td.num_train/args.batch_size))
         n_valid_batches = int(math.ceil(td.num_valid/args.batch_size))
@@ -197,7 +204,7 @@ def main():
             net.build_from_metagraph(metagraph_file, checkpoint_file)
             net.build_optimizer_from_metagraph()
         else:
-            net.build_from_vgg(args.vgg_dir, td.num_classes)
+            net.build_from_vgg(args.vgg_dir, td.num_classes, a_trous=False)
             net.build_optimizer(learning_rate=learning_rate,
                                 global_step=global_step,
                                 weight_decay=args.weight_decay,
@@ -205,12 +212,24 @@ def main():
 
         initialize_uninitialized_variables(sess)
 
+
         #-----------------------------------------------------------------------
         # Create various helpers
         #-----------------------------------------------------------------------
         summary_writer = tf.summary.FileWriter(args.tensorboard_dir,
                                                sess.graph)
         saver = tf.train.Saver(max_to_keep=20)
+
+        scores_list = []
+        class_scores_list = []
+        precision_list = []
+        recall_list = []
+        f1_list = []
+        iou_list = []
+
+        avg_loss_per_epoch = []
+        avg_scores_per_epoch = []
+        avg_iou_per_epoch = []
 
         anchors = get_anchors_for_preset(td.preset)
         training_ap_calc = APCalculator()
@@ -230,7 +249,6 @@ def main():
                                      td.label_colors, restore)
         validation_imgs = ImageSummary(sess, summary_writer, 'validation',
                                        td.label_colors, restore)
-
         training_loss = LossSummary(sess, summary_writer, 'training',
                                     td.num_train, restore)
         validation_loss = LossSummary(sess, summary_writer, 'validation',
@@ -252,25 +270,28 @@ def main():
         for e in range(start_epoch, args.epochs):
             training_imgs_samples = []
             validation_imgs_samples = []
-
             #-------------------------------------------------------------------
             # Train
             #-------------------------------------------------------------------
             generator = td.train_generator(args.batch_size, args.num_workers)
             description = '[i] Train {:>2}/{}'.format(e+1, args.epochs)
-            for x, y, gt_boxes, img_seg in tqdm(generator, total=n_train_batches,
+            for x, y, gt_boxes, img_seg_gt, imgseg_gt_to_compare in tqdm(generator, total=n_train_batches,
                                        desc=description, unit='batches'):
 
+                cv2.imwrite('img_seg_to_compare_training.png', np.squeeze(imgseg_gt_to_compare))
+                rev = np.squeeze(img_seg_gt)
+                gt_rev_onehot = reverse_one_hot(rev)
+                output_seg_output = colour_code_segmentation(gt_rev_onehot)
+                cv2.imwrite('revereceonehot.png', output_seg_output)
+                print('img_seg_gt',img_seg_gt)
+                exit()
                 if len(training_imgs_samples) < 3:
                     saved_images = np.copy(x[:3])
 
-                feed = {net.image_input: x,
-                        net.labels: y, net.label_seg_gt:img_seg}
-                result, loss_batch, _ = sess.run([net.result, net.losses,
-                                                  net.optimizer],
-                                                 feed_dict=feed)
-                #print("logits_seg shape", logits_seg.shape)
-                #exit()
+                feed = {net.image_input: x, net.labels: y, net.label_seg_gt:img_seg_gt} #
+                fcn32, result,loss_batch, _ = sess.run([net.fcn32_upsampled,net.result, net.losses,net.optimizer], feed_dict=feed)
+
+
                 if math.isnan(loss_batch['total']):
                     print('[!] total loss is NaN.')
 
@@ -279,46 +300,100 @@ def main():
                 if e == 0: continue
 
                 for i in range(result.shape[0]):
-                    boxes = decode_boxes(result[i], anchors, 0.5, td.lid2name)
-                    boxes = suppress_overlaps(boxes)
-                    training_ap_calc.add_detections(gt_boxes[i], boxes)
+                   boxes = decode_boxes(result[i], anchors, 0.5, td.lid2name)
+                   boxes = suppress_overlaps(boxes)
+                   training_ap_calc.add_detections(gt_boxes[i], boxes)
 
-                    if len(training_imgs_samples) < 3:
-                        training_imgs_samples.append((saved_images[i], boxes))
+                   if len(training_imgs_samples) < 3:
+                      training_imgs_samples.append((saved_images[i], boxes))
 
             #-------------------------------------------------------------------
             # Validate
             #-------------------------------------------------------------------
             generator = td.valid_generator(args.batch_size, args.num_workers)
             description = '[i] Valid {:>2}/{}'.format(e+1, args.epochs)
+            counter = 0
+            if not os.path.isdir("%s/%04d" % ("checkpoints3Dec", e)):
+                os.makedirs("%s/%04d" % ("checkpoints3Dec", e))
 
-            for x, y, gt_boxes, img_seg in tqdm(generator, total=n_valid_batches,
+            target = open("%s/%04d/val_scores.csv" % ("checkpoints3Dec", e), 'w')
+            target.write("val_name, avg_accuracy, precision, recall, f1 score, mean iou, %s\n" % str(counter))
+
+
+            for x, y, gt_boxes, img_seg_gt, imgseg_gt_to_compare in tqdm(generator, total=n_valid_batches,
                                        desc=description, unit='batches'):
-                feed = {net.image_input: x,
-                        net.labels: y, net.label_seg_gt:img_seg}
-                output_seg,result, loss_batch = sess.run([net.logits_seg,net.result, net.losses],
-                                              feed_dict=feed)
-
-                validation_loss.add(loss_batch,  x.shape[0])
-
-                output_seg_rev = reverse_one_hot(output_seg)
-                output_seg_output = colour_code_segmentation(output_seg_rev,color)
 
 
+                gt_rev_onehot = reverse_one_hot(one_hot_encode(np.squeeze(imgseg_gt_to_compare)))
 
+                feed = {net.image_input: x, net.labels: y, net.label_seg_gt:img_seg_gt} #,
+                result,output_seg,loss_batch = sess.run([net.result,net.logits_seg, net.losses], feed_dict=feed)
+
+
+                output_image = np.array(output_seg[0,:,:,:])
+                output_seg_rev = reverse_one_hot(output_image)
+                output_seg_output = colour_code_segmentation(output_seg_rev)
+
+                accuracy, class_accuracies, prec, rec, f1, iou = evaluate_segmentation(pred=output_seg_rev,
+                                                                                             label=gt_rev_onehot,
+                                                                                             num_classes=21)
+
+                filename = str(counter)
+                target.write("%s, %f, %f, %f, %f, %f" % (filename, accuracy, prec, rec, f1, iou))
+                for item in class_accuracies:
+                    target.write(", %f" % (item))
+                target.write("\n")
+
+                scores_list.append(accuracy)
+                class_scores_list.append(class_accuracies)
+                precision_list.append(prec)
+                recall_list.append(rec)
+                f1_list.append(f1)
+                iou_list.append(iou)
+
+
+                #file_name = os.path.splitext(file_name)[0]
+                original_gt = colour_code_segmentation(gt_rev_onehot)
+
+                cv2.imwrite("%s/%04d/%s_gt.png" % ("checkpoints3Dec", e, filename), original_gt)
+                cv2.imwrite("%s/%04d/%s_pred.png" % ("checkpoints3Dec", e, filename),output_seg_output)
+
+
+                counter += 1
                 if e == 0: continue
 
+
                 for i in range(result.shape[0]):
-                    boxes = decode_boxes(result[i], anchors, 0.5, td.lid2name)
-                    boxes = suppress_overlaps(boxes)
-                    validation_ap_calc.add_detections(gt_boxes[i], boxes)
+                   boxes = decode_boxes(result[i], anchors, 0.5, td.lid2name)
+                   boxes = suppress_overlaps(boxes)
+                   validation_ap_calc.add_detections(gt_boxes[i], boxes)
 
-                    if len(validation_imgs_samples) < 3:
-                        validation_imgs_samples.append((np.copy(x[i]), boxes))
+                   if len(validation_imgs_samples) < 3:
+                      validation_imgs_samples.append((np.copy(x[i]), boxes))
 
+            target.close()
             #-------------------------------------------------------------------
             # Write summaries
             #-------------------------------------------------------------------
+            avg_score = np.mean(scores_list)
+            # class_avg_scores = np.mean(class_scores_list, axis=0)
+            avg_scores_per_epoch.append(avg_score)
+            avg_precision = np.mean(precision_list)
+            avg_recall = np.mean(recall_list)
+            avg_f1 = np.mean(f1_list)
+            avg_iou = np.mean(iou_list)
+            avg_iou_per_epoch.append(avg_iou)
+
+            print("\nAverage validation accuracy for epoch # %04d = %f" % (e, avg_score))
+            #print("Average per class validation accuracies for epoch # %04d:" % (e))
+            # for index, item in enumerate(class_avg_scores):
+            #     print("%s = %f" % (class_names_list[index], item))
+            print("Validation precision = ", avg_precision)
+            print("Validation recall = ", avg_recall)
+            print("Validation F1 score = ", avg_f1)
+            print("Validation IoU score = ", avg_iou)
+
+            #print('current_loss = %.4f ',loss_batch)
             training_loss.push(e+1)
             validation_loss.push(e+1)
 
@@ -338,6 +413,7 @@ def main():
 
             training_imgs.push(e+1, training_imgs_samples)
             validation_imgs.push(e+1, validation_imgs_samples)
+            #validation_imgs_seg.push(e+1, output_seg_output)
 
             summary_writer.flush()
 
